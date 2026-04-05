@@ -1,0 +1,39 @@
+name: tfm-ml-trading
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  # Python
+  - python=3.11
+
+  # Data Science core
+  - pandas
+  - numpy
+  - scipy
+
+  # Machine Learning
+  - scikit-learn
+  - hmmlearn
+
+  # Jupyter & IDE
+  - jupyter
+  - jupyterlab
+  - ipykernel
+  - ipywidgets
+
+  # Data Download
+  - yfinance
+
+  # Visualization
+  - matplotlib
+  - seaborn
+
+  # Utilities
+  - pip
+  - pip:
+    # FRED API — descarga variables macroeconómicas
+    - fredapi
+    # pandas-datareader — descarga factores Fama-French 5
+    - pandas-datareader
+    # python-dotenv — carga FRED_API_KEY desde .env
+    - python-dotenv
