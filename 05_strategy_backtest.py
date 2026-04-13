@@ -1,8 +1,12 @@
 """
 05_strategy_backtest.py
 =======================
-Construye el portafolio mensual a partir de las predicciones OOS
+Construye el portafolio mensual a partir de las predicciones OOS semanales
 y calcula metricas de performance vs SPY.
+
+Predicciones: frecuencia semanal (W-FRI). El portafolio sigue siendo mensual:
+  se filtra al último viernes de cada mes para la decisión de asignación.
+  Los retornos se calculan sobre precios mensuales (cierre-mes a cierre-mes).
 
 Estrategia Long-Short con Kelly multi-activo (matriz de covarianza completa):
   Long   Top-3 ETFs  (mayor retorno predicho)
@@ -16,7 +20,8 @@ Estrategia Long-Short con Kelly multi-activo (matriz de covarianza completa):
     Sigma_eff[i,j] = d_i * d_j * Sigma[i,j]   (Sigma_eff = D Sigma D)
     d_i = +1 para longs, -1 para shorts
     m_eff_i = d_i * predicted_return_i          (retorno esperado de la posicion)
-    Sigma    = matriz de covarianza 6x6 de retornos historicos causales (36m)
+    Sigma    = matriz de covarianza 6x6 de retornos mensuales historicos causales (36m)
+               (calculada sobre precios filtrados a frecuencia mensual)
 
   Se aplica half-Kelly (fraccion 0.5).  Pesos negativos se fijan a 0 (sin
   inversion de direccion).  Los 6 pesos positivos se normalizan para sumar 1
@@ -25,9 +30,10 @@ Estrategia Long-Short con Kelly multi-activo (matriz de covarianza completa):
 Retorno mensual = sum(w_long * ret_long_t+1) - sum(w_short * ret_short_t+1)
 
 Anti-leakage:
-  - Retornos del mes t+1: prices.pct_change().shift(-1)
-  - Sigma para Kelly: solo precios <= t (causal, ventana de 36 meses)
-  - Predicciones del modelo: ya son causales (walk-forward expansivo)
+  - Predicciones semanales filtradas al último viernes de cada mes
+  - Retornos del mes t+1: prices_monthly.pct_change().shift(-1)
+  - Sigma para Kelly: solo precios mensuales <= t (causal, ventana de 36 meses)
+  - Predicciones: ya causales del walk-forward expansivo
 """
 
 import os
@@ -38,7 +44,7 @@ import matplotlib.ticker as mtick
 import warnings
 warnings.filterwarnings("ignore")
 
-from config import DATA_DIR, TOP_N, BOTTOM_N
+from config import DATA_DIR, TOP_N, BOTTOM_N, OOS_START, OOS_END, KELLY_FRACTION
 
 COST_BPS = 10   # costos de transaccion (basis points por operacion, cada leg)
 
@@ -88,7 +94,7 @@ def kelly_weights_multiasset(
     prices: pd.DataFrame,
     current_date: pd.Timestamp,
     lookback: int = 36,
-    kelly_fraction: float = 0.5,
+    kelly_fraction: float = KELLY_FRACTION,
     reg: float = 1e-4,
 ) -> tuple:
     """
@@ -110,7 +116,7 @@ def kelly_weights_multiasset(
                  direccion se penalizan entre si (reducen pesos mutuamente),
                  y que un long y un short correlacionados se benefician.
       Sigma      covarianza 6x6 de retornos mensuales historicos causales
-                 (solo precios <= current_date, ventana de `lookback` meses)
+                 (precios ya filtrados a frecuencia mensual, ventana de `lookback` meses)
 
     Post-procesado:
       - Half-Kelly: f = kelly_fraction * f*  (0.5 por defecto)
@@ -135,7 +141,7 @@ def kelly_weights_multiasset(
         prices         DataFrame de precios (index=fecha, cols=tickers)
         current_date   fecha de decision (causal: Sigma solo hasta esta fecha)
         lookback       meses de historia para estimar Sigma  (default: 36)
-        kelly_fraction fraccion del Kelly completo  (default: 0.5 = half-Kelly)
+        kelly_fraction fraccion del Kelly completo  (default: KELLY_FRACTION=0.5 en config.py)
         reg            regularizacion de la diagonal para evitar singularidad
 
     Returns:
@@ -191,13 +197,18 @@ def build_portfolio(
     predictions_path: str,
     prices_path: str = f"{DATA_DIR}/etf_prices.csv",
     transaction_costs: bool = True,
-    kelly_fraction: float = 0.5,
+    kelly_fraction: float = KELLY_FRACTION,
     kelly_lookback: int = 36,
 ) -> pd.DataFrame:
     """
     Construye retornos mensuales del portafolio Long-Short con Kelly multi-activo.
 
-    Para cada mes t:
+    Las predicciones son semanales (W-FRI); se filtran al último viernes de cada
+    mes para obtener la señal mensual de asignación. Los precios también se
+    filtran a esas mismas fechas mensuales para calcular retornos mes-a-mes
+    y estimar la covarianza de Kelly correctamente.
+
+    Para cada mes t (último viernes del mes):
 
       LONG  — Top-N ETFs (mayor predicted_return)
       SHORT — Bottom-N ETFs (menor predicted_return) — sin filtros adicionales
@@ -206,27 +217,37 @@ def build_portfolio(
         f* = Sigma_eff^{-1} . m_eff   (half-Kelly, normalizados a suma 1)
         Sigma_eff = D . Sigma . D   donde D = diag(+1,...,+1,-1,...,-1)
         Sigma estimada sobre los ultimos kelly_lookback meses causales (<= t)
-
-      Pesos negativos se fijan a 0 (sin inversion de direccion).
-      Si todos los pesos son 0 (sin señal Kelly): pesos iguales (1/6 cada uno).
+        usando precios_monthly (retornos mensuales)
 
       Retorno = sum(w_long * ret_long_t+1) - sum(w_short * ret_short_t+1)
+      donde ret_t+1 = retorno mensual entre último viernes de mes t y mes t+1
 
     Anti-leakage:
-      - Retornos del mes t+1: prices.pct_change().shift(-1)  (nunca usados para decidir)
-      - Sigma para Kelly: solo precios <= t  (causal)
+      - Predicciones semanales filtradas al último viernes de cada mes
+      - Retornos del mes t+1: prices_monthly.pct_change().shift(-1)
+      - Sigma para Kelly: solo precios_monthly <= t  (causal, 36 meses)
       - Predicciones: ya causales del walk-forward expansivo
     """
     preds  = pd.read_csv(predictions_path, parse_dates=["date"])
     prices = pd.read_csv(prices_path, index_col=0, parse_dates=True)
 
-    # Retornos t+1 para el backtest (anti-leakage: shift -1)
-    actual_returns = prices.pct_change().shift(-1)
+    # Filtrar predicciones semanales al último viernes de cada mes
+    preds["_month"] = preds["date"].dt.to_period("M")
+    preds = preds.loc[
+        preds.groupby("_month")["date"].transform("max") == preds["date"]
+    ].drop(columns=["_month"])
+
+    # Filtrar precios a las mismas fechas mensuales (anti-leakage: retornos mes-a-mes)
+    monthly_dates  = sorted(preds["date"].unique())
+    prices_monthly = prices.reindex(monthly_dates).ffill()
+
+    # Retornos mensuales t+1 (retorno entre mes t y mes t+1)
+    actual_returns = prices_monthly.pct_change().shift(-1)
     actual_returns.index.name = "date"
 
     pred_dates = preds["date"].unique()
     n_aligned  = sum(d in actual_returns.index for d in pred_dates)
-    print(f"  [Validacion] {n_aligned}/{len(pred_dates)} fechas alineadas "
+    print(f"  [Validacion] {n_aligned}/{len(pred_dates)} periodos mensuales alineados "
           f"({n_aligned/len(pred_dates):.1%})")
 
     results    = []
@@ -263,8 +284,9 @@ def build_portfolio(
         short_etfs = list(short_rets.keys())
 
         # ── Kelly multi-activo: 6 posiciones juntas ───────────────────────────
+        # Se pasan precios mensuales: tail(36) = 36 meses de historia
         long_w, short_w = kelly_weights_multiasset(
-            long_etfs, short_etfs, pred_by_etf, prices, date,
+            long_etfs, short_etfs, pred_by_etf, prices_monthly, date,
             lookback=kelly_lookback, kelly_fraction=kelly_fraction,
         )
 
@@ -314,10 +336,10 @@ def build_portfolio(
 
     months_with_short = int((df["n_short"] > 0).sum())
     months_long_only  = int((df["n_short"] == 0).sum())
-    print(f"  [Portafolio] {len(df)} meses | "
+    print(f"  [Portafolio] {len(df)} periodos mensuales | "
           f"Kelly multi-activo top{TOP_N}/bottom{BOTTOM_N} "
-          f"| corto activo: {months_with_short}m  "
-          f"long-only (Kelly=0 en cortos): {months_long_only}m")
+          f"| corto activo: {months_with_short}  "
+          f"long-only (Kelly=0 en cortos): {months_long_only}")
     return df
 
 
@@ -381,7 +403,7 @@ def plot_cumulative(results: dict, title: str = "Backtest Results"):
     plt.tight_layout()
     out = f"{DATA_DIR}/backtest_chart.png"
     plt.savefig(out, dpi=150)
-    plt.show()
+    plt.close(fig)
     print(f"  -> Grafico guardado: {out}")
 
 
@@ -395,7 +417,7 @@ def print_metrics_table(metrics_list: list):
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    model_names = ["RandomForest", "GradientBoosting"]
+    model_names = ["LightGBM", "RandomForest", "GradientBoosting"]
     prices_path = f"{DATA_DIR}/etf_prices.csv"
 
     metrics_list = []
@@ -438,11 +460,13 @@ if __name__ == "__main__":
         else:
             print("[OOS] Kelly asigno peso 0 a todos los cortos en todos los meses")
 
-    prices   = pd.read_csv(prices_path, index_col=0, parse_dates=True)
-    spy_rets = prices["SPY"].pct_change().dropna()
+    prices = pd.read_csv(prices_path, index_col=0, parse_dates=True)
 
     if oos_df is not None:
-        spy_oos = spy_rets.reindex(oos_df.index).dropna()
+        # SPY retornos mensuales alineados con el portafolio (mismo índice mensual)
+        spy_monthly = prices["SPY"].reindex(oos_df.index).ffill()
+        spy_oos     = spy_monthly.pct_change().dropna()
+        spy_oos     = spy_oos.reindex(oos_df.index).dropna()
         plot_data["SPY (OOS)"] = spy_oos
         metrics_list.append(performance_summary(spy_oos, "SPY (OOS)"))
 
@@ -450,7 +474,7 @@ if __name__ == "__main__":
     if plot_data:
         plot_cumulative(
             plot_data,
-            title=f"Sector Rotation — Kelly Multi-Activo Top{TOP_N}/Bottom{BOTTOM_N} vs SPY  [OOS 2020-2024]",
+            title=f"Sector Rotation — Kelly Multi-Activo Top{TOP_N}/Bottom{BOTTOM_N} vs SPY  [OOS {OOS_START[:4]}-{OOS_END[:4]}]",
         )
 
     print("[OK] Backtest completado.")

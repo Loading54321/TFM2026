@@ -15,7 +15,7 @@ Decodificacion en este script (solo visualizacion / diagnostico):
          visualizacion mas limpia e interpretable para el TFM.
 
 Decodificacion en el walk-forward (04_walk_forward_training.py):
-  OOS -> Forward filter causal, un paso por mes  [garantia de no lookahead]
+  OOS -> Forward filter causal, un paso por semana  [garantia de no lookahead]
 """
 
 import numpy as np
@@ -28,7 +28,7 @@ warnings.filterwarnings("ignore")
 from config import DATA_DIR, OOS_START
 from regime_model import (
     load_spy_features, fit_hmm, label_mapping,
-    decode_is_states, decode_full_viterbi,
+    decode_full_viterbi,
     hmm_diagnostics,
     OBS_COLS, N_STATES, REGIME_NAMES, REGIME_COLORS,
 )
@@ -65,7 +65,7 @@ def _plot_regimes(prices: pd.DataFrame, regime: pd.Series, save_path: str):
     patches.append(plt.Line2D([0], [0], color="black", lw=1.5, label="SPY"))
     ax.legend(handles=patches, loc="upper left", fontsize=10)
     ax.set_title(
-        "Regimenes de mercado — Gaussian HMM  (ret_3m + vol_3m)  |  "
+        "Regimenes de mercado — Gaussian HMM  (ret_13w + vol_13w)  |  "
         "Train IS-only · Visualizacion: Viterbi global",
         fontsize=12, fontweight="bold",
     )
@@ -107,9 +107,9 @@ def main():
 
     n_is, n_oos = int(is_mask.sum()), int((~is_mask).sum())
     print(f"[HMM] Observaciones: {OBS_COLS}")
-    print(f"[HMM] Entrenando EM con {n_is} meses IS (hasta {df.index[is_mask].max().date()})")
-    print(f"      IS  -> Viterbi IS-only  ({n_is} meses)")
-    print(f"      OOS -> Viterbi global IS+OOS para visualizacion ({n_oos} meses)")
+    print(f"[HMM] Entrenando EM con {n_is} semanas IS (hasta {df.index[is_mask].max().date()})")
+    print(f"      IS  -> Viterbi IS-only  ({n_is} semanas)")
+    print(f"      OOS -> Viterbi global IS+OOS para visualizacion ({n_oos} semanas)")
 
     model   = fit_hmm(X_is)
     mapping = label_mapping(model)
@@ -131,7 +131,7 @@ def main():
 
     # Diagnostico de parametros aprendidos
     print("\n[HMM] Parametros aprendidos (IS):")
-    print(f"  {'Regimen':10s}  {'ret_3m':>8s}  {'vol_3m':>8s}  {'std_ret3m':>10s}  {'std_vol3m':>10s}")
+    print(f"  {'Regimen':10s}  {'ret_13w':>8s}  {'vol_13w':>8s}  {'std_r13w':>10s}  {'std_v13w':>10s}")
     for hmm_s, econ_l in sorted(mapping.items(), key=lambda x: x[1]):
         mu   = model.means_[hmm_s]
         cov  = model.covars_[hmm_s]
@@ -152,11 +152,11 @@ def main():
 
     # Distribucion de regimenes
     counts = regime.value_counts().sort_index()
-    print(f"\n[Distribucion] {len(regime)} meses totales:")
+    print(f"\n[Distribucion] {len(regime)} semanas totales:")
     for rid, name in REGIME_NAMES.items():
         n   = int(counts.get(rid, 0))
         pct = 100 * n / len(regime)
-        print(f"  {name:10s} ({rid}): {n:4d} meses  ({pct:5.1f}%)")
+        print(f"  {name:10s} ({rid}): {n:4d} semanas  ({pct:5.1f}%)")
 
     # Guardar market_regimes.csv
     regime_df = regime.reset_index()

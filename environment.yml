@@ -4,7 +4,7 @@ channels:
   - defaults
 dependencies:
   # Python
-  - python=3.11
+  - python=3.10
 
   # Data Science core
   - pandas
@@ -14,6 +14,7 @@ dependencies:
   # Machine Learning
   - scikit-learn
   - hmmlearn
+  - lightgbm         
 
   # Jupyter & IDE
   - jupyter
@@ -26,14 +27,11 @@ dependencies:
 
   # Visualization
   - matplotlib
-  - seaborn
 
   # Utilities
   - pip
   - pip:
     # FRED API — descarga variables macroeconómicas
     - fredapi
-    # pandas-datareader — descarga factores Fama-French 5
-    - pandas-datareader
     # python-dotenv — carga FRED_API_KEY desde .env
     - python-dotenv

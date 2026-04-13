@@ -13,10 +13,10 @@ import pandas as pd
 from sklearn.base import clone
 from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
 from sklearn.preprocessing import StandardScaler
-from sklearn.impute import SimpleImputer
 from sklearn.pipeline import Pipeline
 
 from config import RF_CONFIG, GB_CONFIG, RANDOM_SEED, DATA_DIR
+from utils import ml_train_date_kept
 
 # Configuración de modelos
 MODELS = {
@@ -28,17 +28,16 @@ MODELS = {
 def build_pipeline(model) -> Pipeline:
     """
     Construye un pipeline estándar con una copia fresca del estimador:
-      1. Imputación de valores faltantes (mediana)
-      2. Escalado estándar (StandardScaler)
-      3. Modelo (clonado para evitar compartir estado entre iteraciones)
+      1. Escalado estándar (StandardScaler)
+      2. Modelo (clonado para evitar compartir estado entre iteraciones)
 
+    NaN en features se cubren con ffill en 02_feature_engineering.py.
     El clon garantiza que cada llamada devuelva un Pipeline independiente,
-    crítico en el walk-forward donde build_pipeline se llama en cada mes OOS.
+    crítico en el walk-forward donde build_pipeline se llama en cada semana OOS.
     """
     return Pipeline([
-        ("imputer", SimpleImputer(strategy="median")),
-        ("scaler",  StandardScaler()),
-        ("model",   clone(model)),
+        ("scaler", StandardScaler()),
+        ("model",  clone(model)),
     ])
 
 
@@ -78,6 +77,7 @@ def feature_importance_report(
     train = panel[
         (panel["date"] >= train_start) & (panel["date"] <= train_end)
     ].dropna(subset=["target"])
+    train = train[ml_train_date_kept(train["date"])]
 
     pipe = build_pipeline(MODELS[model_name])
     pipe.fit(train[feature_cols].values, train["target"].values)

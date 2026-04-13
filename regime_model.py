@@ -3,12 +3,15 @@ regime_model.py
 ===============
 Funciones compartidas para la deteccion de regimenes con Gaussian HMM.
 
+Frecuencia: semanal (W-FRI). Las observaciones son ret_13w y vol_13w,
+equivalente semanal a ret_3m/vol_3m (13 semanas ≈ 1 trimestre).
+
 Importadas por:
   03_market_regime_detection.py  (visualizacion + CSV de respaldo)
   04_walk_forward_training.py    (regimen integrado en el walk-forward)
 
 ─────────────────────────────────────────────────────────────────────────────
-VALIDACION CONTRA LITERATURA (base_TFM.md)
+VALIDACION CONTRA LITERATURA
 ─────────────────────────────────────────────────────────────────────────────
 
 [1] Paper clasico (HMM):
@@ -16,7 +19,7 @@ VALIDACION CONTRA LITERATURA (base_TFM.md)
     time series" — stacyzheng.github.io/files/hmm.pdf
     -> El paper usa GaussianHMM con retornos como observaciones y
        covariance_type='full'. Esta implementacion CUMPLE y MEJORA:
-       usa (ret_3m, vol_3m) en lugar de solo retornos, separando mejor
+       usa (ret_13w, vol_13w) en lugar de solo retornos, separando mejor
        los estados de alta y baja volatilidad.
 
 [2] Tutorial practico:
@@ -38,26 +41,27 @@ VALIDACION CONTRA LITERATURA (base_TFM.md)
        canonico para series financieras con persistencia de estados.
 
 ─────────────────────────────────────────────────────────────────────────────
-ELECCION DE FEATURES — por que (ret_3m, vol_3m):
+ELECCION DE FEATURES — por que (ret_13w, vol_13w):
 ─────────────────────────────────────────────────────────────────────────────
 
-  Problema con (ret_1m, ret_3m) [implementacion anterior]:
-    - ret_3m ~ ret_1m[t] + ret_1m[t-1] + ret_1m[t-2]  -> correlacion >= 0.7
+  Problema con (ret_1w, ret_13w):
+    - ret_13w ~ suma de ret_1w[t]...ret_1w[t-12]  -> correlacion alta
     - Usar covariance_type='diag' con features correladas es matematicamente
       incorrecto: el modelo asume independencia donde no la hay, y la EM
-      converge a minimos locales donde Bear captura ~40% de los meses
-      (deberia ser ~15-20% historicamente).
+      converge a minimos locales donde Bear captura demasiados periodos.
 
   Solucion — dos features aproximadamente ortogonales:
-    ret_3m  retorno trimestral del SPY  (senial de DIRECCION / tendencia)
-    vol_3m  volatilidad realizada 3m    (senial de RIESGO / regimen)
+    ret_13w  retorno acumulado 13 semanas del SPY  (senial de DIRECCION)
+    vol_13w  volatilidad realizada 13w, anualizada (senial de RIESGO)
     -> Alineado con PyQuantLab (2025): "returns + volatility" como
        observaciones standard para HMM de regimenes financieros.
+    -> 13 semanas ≈ 3 meses: la escala de retorno compuesto es identica,
+       por lo que las medias iniciales se mantienen iguales al caso mensual.
 
-  Separacion en el espacio (ret_3m, vol_3m):
-    Bear:    ret_3m << 0,   vol_3m >> alto  (caidas violentas + panico)
-    Ranging: ret_3m ~ 0,    vol_3m medio    (lateralizacion)
-    Bull:    ret_3m > 0,    vol_3m bajo     (tendencia sostenida + calma)
+  Separacion en el espacio (ret_13w, vol_13w):
+    Bear:    ret_13w << 0,  vol_13w >> alto  (caidas violentas + panico)
+    Ranging: ret_13w ~ 0,  vol_13w medio    (lateralizacion)
+    Bull:    ret_13w > 0,  vol_13w bajo     (tendencia sostenida + calma)
 
   La volatilidad es el discriminante mas potente: Bear tiene vol 3-4x
   mayor que Bull, mientras que en el espacio de retornos solos los tres
@@ -67,11 +71,11 @@ ELECCION DE FEATURES — por que (ret_3m, vol_3m):
   real entre retorno y volatilidad (efecto palanca / leverage effect).
 
 ─────────────────────────────────────────────────────────────────────────────
-REGIMENES: 0=Bear | 1=Ranging | 2=Bull  (ordenados por ret_3m medio)
+REGIMENES: 0=Bear | 1=Ranging | 2=Bull  (ordenados por ret_13w medio)
 
 DECODIFICACION:
   IS  -> Viterbi global (secuencia optima, sin lookahead fuera del IS)
-  OOS -> Forward filter causal, un paso por mes (sin ninguna info futura)
+  OOS -> Forward filter causal, un paso por semana (sin ninguna info futura)
 ─────────────────────────────────────────────────────────────────────────────
 """
 
@@ -89,27 +93,27 @@ REGIME_NAMES  = {0: "Bear", 1: "Ranging", 2: "Bull"}
 REGIME_COLORS = {0: "#e63946", 1: "#adb5bd", 2: "#2dc653"}
 
 # Nombres de las dos observaciones del HMM (usados en diagnosticos y seleccion)
-OBS_COLS = ["ret_3m", "vol_3m"]
+OBS_COLS = ["ret_13w", "vol_13w"]
 
 
 # ── 1. Features ───────────────────────────────────────────────────────────────
 
 def load_spy_features(data_dir: str = DATA_DIR) -> pd.DataFrame:
     """
-    Carga precios del SPY y calcula las dos observaciones del HMM:
+    Carga precios semanales del SPY (W-FRI) y calcula las dos observaciones del HMM:
 
-      ret_3m  retorno trimestral acumulado  pct_change(3)
-              -> capta la DIRECCION/tendencia de 3 meses; mas suave que 1m
+      ret_13w  retorno acumulado 13 semanas  pct_change(13)
+               -> capta la DIRECCION/tendencia trimestral; equivalente a ret_3m mensual
 
-      vol_3m  volatilidad realizada a 3 meses, anualizada
-              std(ret_1m ultimos 3 meses) * sqrt(12)
-              -> capta el RIESGO / nivel de panico del mercado
+      vol_13w  volatilidad realizada 13 semanas, anualizada
+               std(ret_1w ultimas 13 semanas) * sqrt(52)
+               -> capta el RIESGO / nivel de panico del mercado
 
     Las dos features son aproximadamente ortogonales: la correlacion entre
     retorno y volatilidad existe (leverage effect) pero no es degenerada,
     por lo que el HMM puede separar bien los tres regimenes.
 
-    Se eliminan las primeras filas con NaN (ventana de 3 meses inicial).
+    Se eliminan las primeras filas con NaN (ventana de 13 semanas inicial).
     """
     prices = pd.read_csv(
         f"{data_dir}/etf_prices.csv", index_col=0, parse_dates=True
@@ -117,12 +121,12 @@ def load_spy_features(data_dir: str = DATA_DIR) -> pd.DataFrame:
     prices.index.name = "date"
     prices.sort_index(inplace=True)
 
-    spy    = prices["SPY"]
-    ret_1m = spy.pct_change()
-    ret_3m = spy.pct_change(3)
-    vol_3m = ret_1m.rolling(3).std() * np.sqrt(12)   # volatilidad anualizada
+    spy     = prices["SPY"]
+    ret_1w  = spy.pct_change()
+    ret_13w = spy.pct_change(13)
+    vol_13w = ret_1w.rolling(13).std() * np.sqrt(52)   # volatilidad anualizada
 
-    df = pd.DataFrame({"ret_3m": ret_3m, "vol_3m": vol_3m}, index=spy.index)
+    df = pd.DataFrame({"ret_13w": ret_13w, "vol_13w": vol_13w}, index=spy.index)
     df.dropna(inplace=True)
     return df
 
@@ -144,12 +148,13 @@ def fit_hmm(X_train: np.ndarray) -> GaussianHMM:
       los valores economicos que definimos a continuacion.  Evita minimos
       locales donde todos los estados colapsan al mismo cluster.
 
-    Inicializacion en el espacio (ret_3m, vol_3m):
-      Valores en decimal; vol_3m es anualizada (ej. 0.40 = 40% vol anual).
+    Inicializacion en el espacio (ret_13w, vol_13w):
+      Valores en decimal; vol_13w es anualizada (ej. 0.40 = 40% vol anual).
+      ret_13w ≈ ret_3m en escala de retorno compuesto (13 semanas ≈ 3 meses).
 
-      Bear:    ret_3m ~ -18%,  vol_3m ~ 42%  (crisis: caida + panico)
-      Ranging: ret_3m ~  +2%,  vol_3m ~ 18%  (mercado lateral)
-      Bull:    ret_3m ~  +8%,  vol_3m ~ 12%  (tendencia alcista tranquila)
+      Bear:    ret_13w ~ -18%,  vol_13w ~ 42%  (crisis: caida + panico)
+      Ranging: ret_13w ~  +2%,  vol_13w ~ 18%  (mercado lateral)
+      Bull:    ret_13w ~  +8%,  vol_13w ~ 12%  (tendencia alcista tranquila)
     """
     model = GaussianHMM(
         n_components=N_STATES,
@@ -171,7 +176,9 @@ def fit_hmm(X_train: np.ndarray) -> GaussianHMM:
         [0.04, 0.10, 0.86],   # desde Bull   -> mayor prob de seguir Bull
     ])
 
-    # Medias: [ret_3m, vol_3m]
+    # Medias: [ret_13w, vol_13w]
+    # ret_13w tiene la misma escala que ret_3m (13 semanas ≈ 3 meses en retorno compuesto)
+    # vol_13w es anualizada: misma escala que vol_3m mensual anualizada
     model.means_ = np.array([
         [-0.18,  0.42],   # Bear
         [ 0.02,  0.18],   # Ranging
@@ -194,13 +201,13 @@ def fit_hmm(X_train: np.ndarray) -> GaussianHMM:
 def label_mapping(model: GaussianHMM) -> dict:
     """
     Reasigna indices HMM (arbitrarios tras EM) a etiquetas economicas
-    ordenando por la media de ret_3m (primera feature):
-      menor ret_3m -> Bear   (0)
-      medio        -> Ranging (1)
-      mayor        -> Bull   (2)
+    ordenando por la media de ret_13w (primera feature):
+      menor ret_13w -> Bear   (0)
+      medio         -> Ranging (1)
+      mayor         -> Bull   (2)
     Devuelve {indice_hmm: etiqueta_economica}.
     """
-    sorted_states = np.argsort(model.means_[:, 0])   # ordena por ret_3m
+    sorted_states = np.argsort(model.means_[:, 0])   # ordena por ret_13w
     return {int(hmm_s): int(econ_l) for econ_l, hmm_s in enumerate(sorted_states)}
 
 
@@ -228,7 +235,11 @@ def _emission(model: GaussianHMM, obs: np.ndarray) -> np.ndarray:
             continue
         cov_inv = np.linalg.inv(cov)
         log_p   = -0.5 * (diff @ cov_inv @ diff + logdet + k * np.log(2 * np.pi))
-        em[s]   = np.exp(np.clip(log_p, -500, 0))
+        # Solo prevenimos underflow (log_p < -500 → exp → 0 exacto en float64).
+        # NO ponemos upper bound: una Gaussiana estrecha tiene pdf > 1 en el modo
+        # (es densidad, no probabilidad), y capear en exp(0)=1 comprime el ratio
+        # entre estados exactamente cuando la discriminación debería ser máxima.
+        em[s]   = np.exp(np.clip(log_p, -500, 500))
     return np.maximum(em, 1e-300)
 
 
@@ -249,7 +260,7 @@ def forward_step(
       b(obs_t)     verosimilitud de la observacion en cada estado
 
     alpha_t depende unicamente de datos hasta t (sin backward pass ni lookahead).
-    Se llama mes a mes dentro del loop de 04_walk_forward_training.py.
+    Se llama semana a semana dentro del loop de 04_walk_forward_training.py.
     """
     em        = _emission(model, obs)
     alpha_new = (alpha @ model.transmat_) * em
@@ -399,14 +410,14 @@ def get_regime_from_context_window(
     model: GaussianHMM,
     spy_df: pd.DataFrame,
     t: pd.Timestamp,
-    window_months: int,
+    window_periods: int,
     mapping: dict,
 ) -> int:
     """
-    Determina el regimen para el mes t usando una ventana de contexto rodante.
+    Determina el regimen para la semana t usando una ventana de contexto rodante.
 
     Logica:
-      1. Toma las ultimas `window_months` observaciones de spy_df hasta t
+      1. Toma las ultimas `window_periods` observaciones semanales de spy_df hasta t
          (inclusive), es decir solo datos disponibles causalmente en t.
       2. Inicia el filtro forward con prior uniforme (sin memoria de antes
          de la ventana), lo que hace la estimacion del regimen mas adaptable
@@ -416,13 +427,13 @@ def get_regime_from_context_window(
     Por que prior uniforme en lugar de continuar el alpha anterior:
       Continuar el alpha desde el principio de la serie arrastra informacion
       de regimenes muy antiguos que pueden no ser relevantes para el mercado
-      actual.  Con una ventana de 24 meses, el filtro solo considera los
-      ultimos 2 anos de datos, lo que equivale a 'preguntar' al HMM
+      actual.  Con una ventana de 235 semanas (≈ 4.5 años), el filtro solo
+      considera historia reciente, lo que equivale a 'preguntar' al HMM
       cual es el regimen mas probable dado el comportamiento reciente del SPY.
 
     Los PARAMETROS del HMM (means_, covars_, transmat_) siguen siendo los
     estimados en IS con EM.  Solo la inferencia del estado cambia: en lugar
-    de una cadena causal desde t=0, se usa una ventana deslizante de 24m.
+    de una cadena causal desde t=0, se usa una ventana deslizante.
 
     Causalidad garantizada: spy_df.loc[spy_df.index <= t] usa solo datos
     disponibles en t; no hay observaciones futuras en X_window.
@@ -431,7 +442,7 @@ def get_regime_from_context_window(
     if available.empty:
         return 1   # fallback: Ranging si no hay datos suficientes
 
-    X_window = available.iloc[-window_months:].values   # ultimos window_months
+    X_window = available.iloc[-window_periods:].values   # ultimos window_periods
 
     # Prior uniforme: sin bias hacia ningun estado al inicio de la ventana
     alpha = np.ones(model.n_components) / model.n_components

@@ -45,7 +45,7 @@ if __name__ == "__main__":
         print(f"  {step_name}")
         print(f"{'-'*60}")
         t0  = time.time()
-        ret = os.system(f"{PYTHON} {script}")
+        ret = os.system(f'cd /d "{_here}" && {PYTHON} {script}')
         elapsed = time.time() - t0
         if ret != 0:
             print(f"[ERROR] {script} falló. Pipeline detenido.")

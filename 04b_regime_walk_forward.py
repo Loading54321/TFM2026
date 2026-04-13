@@ -7,10 +7,10 @@ Cada RF aprende únicamente de los períodos históricos que coinciden con su
 régimen objetivo (Bear / Ranging / Bull), capturando relaciones distintas
 entre features y retornos futuros en cada fase del ciclo económico.
 
-Arquitectura por paso walk-forward (mes OOS t)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Arquitectura por paso walk-forward (semana OOS t)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   1. Ajustar GaussianHMM en ventana SPY [TRAIN_START, t)  [EM/Baum-Welch]
-  2. Forward filter causal → P(régimen | obs_1..s) para cada mes s < t
+  2. Forward filter causal → P(régimen | obs_1..s) para cada semana s < t
   3. Para cada régimen k ∈ {0=Bear, 1=Ranging, 2=Bull}:
        • Filtrar observaciones del panel de train donde argmax P == k
          (o donde P(k) >= REGIME_THRESHOLD si el parámetro es > 0)
@@ -44,10 +44,10 @@ import warnings
 warnings.filterwarnings("ignore")
 
 from config import (
-    DATA_DIR, TRAIN_START, OOS_START, OOS_END,
-    TOP_N, MIN_TRAIN_MONTHS,
+    DATA_DIR, TRAIN_START, TRAIN_END, OOS_START, OOS_END,
+    TOP_N, MIN_TRAIN_PERIODS, HMM_REGIME_LOOKBACK,
 )
-from utils import load_panel, get_feature_cols
+from utils import load_panel, get_feature_cols, ml_train_date_kept
 from models import MODELS, build_pipeline
 from regime_model import (
     load_spy_features, fit_hmm, label_mapping,
@@ -58,8 +58,8 @@ from regime_model import (
 # ── Parámetros del módulo ─────────────────────────────────────────────────────
 
 # Mínimo de filas del panel por régimen para entrenar RF_k.
-# Con 11 ETFs y ~10 meses por régimen → ~110 filas.
-MIN_REGIME_OBS = 88        # ≈ 8 meses × 11 ETFs
+# Con 11 ETFs y ~35 semanas por régimen → ~385 filas.
+MIN_REGIME_OBS = 385       # ≈ 35 semanas × 11 ETFs
 
 # Si > 0, solo incluir observaciones donde P(régimen=k) >= umbral.
 # Si == 0, se usa argmax (el régimen más probable en cada mes).
@@ -71,40 +71,59 @@ REGIME_THRESHOLD = 0.0
 def _fit_and_label_train(
     spy_df: pd.DataFrame,
     t: pd.Timestamp,
+    hmm_lookback: int = HMM_REGIME_LOOKBACK,
 ) -> tuple:
     """
-    Ajusta GaussianHMM en la ventana de entrenamiento [TRAIN_START, t) y
-    calcula probabilidades filtradas de régimen para cada fecha de train
-    usando únicamente el forward filter causal (sin backward pass).
+    Ajusta GaussianHMM en una ventana RODANTE de `hmm_lookback` semanas
+    anteriores a t y calcula probabilidades filtradas de régimen para cada
+    fecha de esa ventana usando únicamente el forward filter causal.
+
+    Ventana HMM rodante vs ML expansiva (separación intencional):
+      HMM  [t - hmm_lookback, t)  ≈ 5 años (HMM_REGIME_LOOKBACK = 260 semanas)
+           → captura la dinámica de régimen RECIENTE; no contamina con datos
+             de 2008 al inferir el régimen de 2024; 260 semanas garantizan
+             ~40-50 semanas Bear (15-20 %) suficientes para estimar los 23
+             parámetros del GaussianHMM(n=3, d=2, full).
+      ML   [TRAIN_START, t)       ≈ 12-16 años (expansiva, sin cambios aquí)
+           → relaciones cross-seccionales features↔retornos son estables en
+             el tiempo; más datos = mejor generalización del Random Forest.
+
+    Causalidad:
+      Los parámetros EM y el forward filter solo ven observaciones < t.
+      alpha_end es el vector de estado al final de la ventana HMM y sirve
+      como punto de partida causal para avanzar un paso hasta t en
+      _regime_at_t().
 
     Parámetros
     ----------
-    spy_df : DataFrame indexado por fecha con columnas OBS_COLS (ret_3m, vol_3m)
-    t      : primer mes OOS (fecha de predicción; excluida del entrenamiento)
+    spy_df       : DataFrame indexado por fecha con columnas OBS_COLS
+    t            : semana OOS actual (excluida del entrenamiento)
+    hmm_lookback : semanas de historia para el ajuste HMM (defecto: 260 ≈ 5 años)
 
     Devuelve
     --------
     model        : GaussianHMM ajustado  (None si datos insuficientes)
     mapping      : {índice_hmm -> etiqueta_económica}
     probs_train  : {fecha -> array(3,)} con P(régimen=k | obs_pasadas)
-    alpha_end    : vector alpha al final de la ventana de train (array(N_STATES,))
-                   Sirve como punto de partida para avanzar hasta t.
+    alpha_end    : vector alpha al final de la ventana HMM (array(N_STATES,))
     """
-    train_spy = spy_df.loc[
-        (spy_df.index >= pd.Timestamp(TRAIN_START)) & (spy_df.index < t)
-    ].copy()
+    # Ventana rodante: últimas `hmm_lookback` semanas disponibles antes de t
+    candidates = spy_df.loc[spy_df.index < t]
+    train_spy  = candidates.tail(hmm_lookback).copy()
 
-    if len(train_spy) < 24:
+    # Guardia mínima: ≈ 2 años (104 semanas) para que EM sea estable
+    if len(train_spy) < 104:
         return None, None, {}, None
 
     X_train = train_spy[OBS_COLS].values
 
-    # ── 1. Ajuste EM (Baum-Welch) solo con datos de train ────────────────────
+    # ── 1. Ajuste EM (Baum-Welch) sobre la ventana rodante ───────────────────
     model   = fit_hmm(X_train)
     mapping = label_mapping(model)
 
-    # ── 2. Forward filter causal sobre la ventana de train ───────────────────
-    #    alpha_s = P(estados | obs_1..s); solo información pasada en cada paso.
+    # ── 2. Forward filter causal sobre la misma ventana rodante ──────────────
+    #    Iniciamos desde model.startprob_ (aprendido por EM para esta ventana).
+    #    alpha_s = P(estado_s | obs_{inicio_ventana..s}); solo info pasada.
     alpha       = model.startprob_.copy()
     probs_train = {}
 
@@ -143,7 +162,7 @@ def _regime_at_t(
     if t in spy_df.index:
         obs = spy_df.loc[t, OBS_COLS].values
     else:
-        # Último punto disponible como proxy (raro con datos mensuales)
+        # Último punto disponible como proxy (raro con datos semanales)
         available = spy_df.loc[spy_df.index <= t]
         obs = available.iloc[-1][OBS_COLS].values if not available.empty \
               else np.zeros(len(OBS_COLS))
@@ -161,29 +180,30 @@ def _regime_at_t(
 
 def walk_forward_regime_models(
     panel: pd.DataFrame,
-    min_train_months: int  = MIN_TRAIN_MONTHS,
+    min_train_periods: int  = MIN_TRAIN_PERIODS,
     regime_threshold: float = REGIME_THRESHOLD,
-    min_regime_obs: int    = MIN_REGIME_OBS,
-    data_dir: str          = DATA_DIR,
+    min_regime_obs: int     = MIN_REGIME_OBS,
+    data_dir: str           = DATA_DIR,
 ) -> pd.DataFrame:
     """
     Loop walk-forward con 3 RF especializados por régimen + fallback global.
+    Frecuencia semanal: ~260 semanas OOS (2020-2024).
 
-    Por cada mes OOS t:
+    Por cada semana OOS t:
       1. Ajusta HMM en [TRAIN_START, t)  →  parámetros aprendidos del pasado
-      2. Etiqueta régimen de cada mes de train con forward filter causal
-      3. Entrena RF_k sobre los meses donde argmax régimen == k (k=0,1,2)
-      4. Entrena RF_global sobre todos los meses de train (fallback)
+      2. Etiqueta régimen de cada semana de train con forward filter causal
+      3. Entrena RF_k sobre las semanas donde argmax régimen == k (k=0,1,2)
+      4. Entrena RF_global sobre todas las semanas de train (fallback)
       5. Avanza filter hasta t → régimen_t
       6. Predice con RF_{régimen_t} o RF_global si RF_k no disponible
 
     Parámetros
     ----------
-    panel            : DataFrame panel long (date × etf) con features y target
-    min_train_months : meses mínimos de entrenamiento antes de empezar OOS
-    regime_threshold : umbral de probabilidad (0 = argmax, >0 = threshold)
-    min_regime_obs   : filas mínimas del panel por régimen para entrenar RF_k
-    data_dir         : directorio de datos
+    panel              : DataFrame panel long (date × etf) con features y target
+    min_train_periods  : semanas mínimas de entrenamiento antes de empezar OOS
+    regime_threshold   : umbral de probabilidad (0 = argmax, >0 = threshold)
+    min_regime_obs     : filas mínimas del panel por régimen para entrenar RF_k
+    data_dir           : directorio de datos
 
     Devuelve
     --------
@@ -203,15 +223,18 @@ def walk_forward_regime_models(
     print(f"{'='*65}")
     print(f"  Features         : {len(feat_cols)} columnas")
     print(f"  ETFs             : {n_etfs}")
-    print(f"  OOS              : {OOS_START} → {OOS_END}  ({len(oos_dates)} meses)")
+    print(f"  OOS              : {OOS_START} → {OOS_END}  ({len(oos_dates)} semanas)")
+    print(f"  Ventana HMM      : rodante {HMM_REGIME_LOOKBACK} semanas "
+          f"(≈{HMM_REGIME_LOOKBACK // 52:.1f} años)  [re-ajuste EM por semana OOS]")
+    print(f"  Ventana ML       : expansiva desde {TRAIN_START}  [todos los datos IS]")
     print(f"  MIN_REGIME_OBS   : {min_regime_obs} filas  "
-          f"(≈{min_regime_obs // n_etfs} meses × {n_etfs} ETFs)")
+          f"(≈{min_regime_obs // n_etfs} semanas × {n_etfs} ETFs)")
     print(f"  REGIME_THRESHOLD : "
           f"{'argmax' if regime_threshold == 0 else f'{regime_threshold:.2f} (umbral prob)'}")
     print()
 
-    all_preds      = []
-    months_skipped = 0
+    all_preds     = []
+    weeks_skipped = 0
     usage_count    = {REGIME_NAMES[k]: 0 for k in range(N_STATES)}
     usage_count["global_fallback"] = 0
 
@@ -221,15 +244,18 @@ def walk_forward_regime_models(
         model, mapping, probs_train, alpha_end = _fit_and_label_train(spy_df, t)
 
         if model is None:
-            months_skipped += 1
+            weeks_skipped += 1
             continue
 
-        # ── 2. Panel de entrenamiento para este paso ──────────────────────────
-        train_mask = (panel["date"] >= TRAIN_START) & (panel["date"] < t)
+        # ── 2. Panel de entrenamiento para este paso (HMM arriba sin filtrar)
+        train_mask = (
+            (panel["date"] >= TRAIN_START) & (panel["date"] < t)
+            & ml_train_date_kept(panel["date"])
+        )
         train_data = panel[train_mask].dropna(subset=["target"]).copy()
 
-        if len(train_data) < min_train_months * n_etfs:
-            months_skipped += 1
+        if len(train_data) < min_train_periods * n_etfs:
+            weeks_skipped += 1
             continue
 
         # Mapear fecha → régimen argmax  (o probabilidad si threshold > 0)
@@ -304,8 +330,8 @@ def walk_forward_regime_models(
             "bear_prob", "ranging_prob", "bull_prob",
         ]])
 
-        # ── Log anual ─────────────────────────────────────────────────────────
-        if t.month == 1 or i == 0:
+        # ── Log anual (primer viernes de enero) ───────────────────────────────
+        if (t.month == 1 and t.day <= 7) or i == 0:
             top_etfs   = list(pred_data.nsmallest(TOP_N, "rank")["etf"])
             obs_counts = {
                 REGIME_NAMES[k]: int((train_data["_regime"] == k).sum())
@@ -323,13 +349,13 @@ def walk_forward_regime_models(
 
     # ── Resumen de uso ────────────────────────────────────────────────────────
     total_predicted = sum(usage_count.values())
-    print(f"\n[WF-Régimen] Meses predichos : {total_predicted}")
-    print(f"[WF-Régimen] Meses omitidos  : {months_skipped}")
-    print(f"[WF-Régimen] Uso de modelos  :")
+    print(f"\n[WF-Régimen] Semanas predichas: {total_predicted}")
+    print(f"[WF-Régimen] Semanas omitidas : {weeks_skipped}")
+    print(f"[WF-Régimen] Uso de modelos   :")
     for label, cnt in sorted(usage_count.items()):
         if cnt > 0:
             pct = 100 * cnt / max(total_predicted, 1)
-            print(f"    {label:20s}: {cnt:3d} meses  ({pct:5.1f}%)")
+            print(f"    {label:20s}: {cnt:3d} semanas  ({pct:5.1f}%)")
 
     if not all_preds:
         print("[!] No se generaron predicciones. Verifica los datos.")
@@ -364,8 +390,17 @@ def regime_feature_importance(
     """
     from models import feature_importance_report as _fi
 
-    # Cargar panel IS con etiquetas de régimen (ya calculadas por 03)
-    panel_with_regime = load_panel(regime=True, data_dir=data_dir)
+    # Cargar panel IS con etiquetas de régimen (generado por 03_market_regime_detection.py).
+    # Si aún no existe (03 corre después en el pipeline), se omite sin error.
+    try:
+        panel_with_regime = load_panel(regime=True, data_dir=data_dir)
+    except FileNotFoundError:
+        print(
+            "  [!] features_panel_with_regime.csv no encontrado.\n"
+            "      Ejecuta 03_market_regime_detection.py para generar importancias por régimen.\n"
+            "      Omitiendo diagnóstico de importancia de features."
+        )
+        return {}
     feat_cols         = get_feature_cols(panel_with_regime)
     results           = {}
 
@@ -380,7 +415,7 @@ def regime_feature_importance(
             print(f"  → Datos insuficientes ({n_obs} < {min_regime_obs}), omitido")
             continue
 
-        imp = _fi(regime_panel, "RandomForest", TRAIN_START, OOS_START, feat_cols)
+        imp = _fi(regime_panel, "RandomForest", TRAIN_START, TRAIN_END, feat_cols)
         out = f"{data_dir}/feature_importance_RF_{name}.csv"
         imp.to_csv(out)
         print(f"  → Guardado: {out}")
@@ -404,15 +439,15 @@ if __name__ == "__main__":
     if not preds.empty:
         print(f"\n[OK] Walk-Forward Régimen completado.")
         print(f"     Predicciones OOS : {len(preds)} filas")
-        print(f"\n     Distribución de regímenes detectados (meses únicos):")
+        print(f"\n     Distribución de regímenes detectados (semanas únicas):")
         regime_dist = (
             preds.drop_duplicates("date")
             .groupby("regime_name")["date"].count()
-            .rename("meses")
+            .rename("semanas")
         )
         for rname, cnt in regime_dist.items():
             pct = 100 * cnt / regime_dist.sum()
-            print(f"       {rname:10s}: {cnt:3d} meses  ({pct:5.1f}%)")
+            print(f"       {rname:10s}: {cnt:3d} semanas  ({pct:5.1f}%)")
 
         print(f"\n     Importancia de features por régimen (IS):")
         regime_feature_importance(panel)

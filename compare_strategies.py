@@ -20,7 +20,7 @@ import matplotlib.ticker as mtick
 import warnings
 warnings.filterwarnings("ignore")
 
-from config import DATA_DIR, TOP_N, BOTTOM_N
+from config import DATA_DIR, TOP_N, BOTTOM_N, OOS_START, OOS_END
 from importlib import import_module
 
 # Importar desde 05_strategy_backtest (nombre con numero, requiere import_module)
@@ -46,11 +46,12 @@ def build_ew_portfolio(
     leg: str = "long",
 ) -> pd.Series:
     """
-    Retornos mensuales de un portafolio EW puro, sin Kelly ni costos.
+    Retornos semanales de un portafolio EW puro, sin Kelly ni costos.
       leg='long' : Top-N ETFs, weight = 1/N cada uno (retorno positivo)
       leg='short': Bottom-N ETFs, weight = 1/N cada uno (retorno negativo = corto)
 
     Anti-leakage: retornos t+1 via shift(-1), igual que en build_portfolio.
+    El caller reindexea el resultado al índice mensual del portafolio Kelly.
     """
     preds  = pd.read_csv(pred_path, parse_dates=["date"])
     prices = pd.read_csv(prices_path, index_col=0, parse_dates=True)
@@ -93,7 +94,7 @@ def run_comparison():
 
     strategies = {}
 
-    for model in ["RandomForest", "GradientBoosting"]:
+    for model in ["LightGBM", "RandomForest", "GradientBoosting"]:
         pred_path = f"{DATA_DIR}/predictions_{model}.csv"
         if os.path.exists(pred_path):
             port_df = build_portfolio(pred_path, prices_path, transaction_costs=True)
@@ -152,7 +153,7 @@ def run_comparison():
     sep = "=" * 100
     print(f"\n{sep}")
     print("  COMPARACION ANUAL OOS — Retorno compuesto por año + métricas globales")
-    print(f"  Periodo OOS: 2020-2024  |  Ranking basado en predicted_return del modelo")
+    print(f"  Periodo OOS: {OOS_START[:4]}-{OOS_END[:4]}  |  Ranking basado en predicted_return del modelo")
     print(sep)
     print(df_fmt.to_string())
     print(sep)
@@ -176,6 +177,7 @@ def plot_cumulative(strategies: dict, oos_idx):
     """
     # Estilos diferenciados por tipo de estrategia
     styles = {
+        "LightGBM Kelly"       : dict(lw=2.0, ls="-",  color="#e377c2"),
         "RandomForest Kelly"   : dict(lw=2.0, ls="-",  color="#1f77b4"),
         "GradientBoosting Kelly": dict(lw=2.0, ls="--", color="#17becf"),
         "RegimeRF Kelly"       : dict(lw=2.5, ls="-",  color="#9467bd"),
@@ -187,7 +189,7 @@ def plot_cumulative(strategies: dict, oos_idx):
     fig, axes = plt.subplots(2, 1, figsize=(14, 10),
                              gridspec_kw={"height_ratios": [3, 1.5]})
     fig.suptitle(
-        "Comparación de Estrategias OOS 2020-2024\n"
+        f"Comparación de Estrategias OOS {OOS_START[:4]}-{OOS_END[:4]}\n"
         "Retorno acumulado y Drawdown (base $1)",
         fontsize=13, fontweight="bold"
     )

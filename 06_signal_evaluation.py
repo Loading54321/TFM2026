@@ -2,6 +2,7 @@
 06_signal_evaluation.py
 =======================
 Evaluacion de la calidad de las senales de prediccion del modelo.
+Frecuencia de predicciones: semanal (W-FRI).
 
 Basado en el notebook de Stefan Jansen:
   github.com/stefan-jansen/machine-learning-for-trading/blob/main/
@@ -12,7 +13,7 @@ Metricas implementadas (sin alphalens, puro pandas/scipy):
      Spearman rank-correlation entre predicted_return y target (retorno t+1).
      IC > 0.05 se considera util en la practica; IC > 0.10 es excelente.
 
-  2. IC Rolling (ventana 12 meses)
+  2. IC Rolling (ventana 52 semanas = 1 año)
      Estabilidad temporal de la senial: un IC que decae sistematicamente
      indica que el modelo pierde poder predictivo en el OOS reciente.
 
@@ -32,7 +33,7 @@ Modelos evaluados:
   RandomForest, GradientBoosting, RegimeRF (3 RF por regimen HMM)
 
 Genera:
-  data/signal_evaluation_IC_{model}.csv        IC mensual por modelo
+  data/signal_evaluation_IC_{model}.csv        IC semanal por modelo
   data/signal_evaluation_quintiles_{model}.csv Retornos por quintil
   data/signal_evaluation_plot.png              Grafico con los 4 paneles
 
@@ -57,10 +58,10 @@ from regime_model import REGIME_NAMES
 
 def compute_ic(preds: pd.DataFrame) -> pd.Series:
     """
-    IC mensual = Spearman(predicted_return, target) por fecha.
+    IC semanal = Spearman(predicted_return, target) por fecha.
 
     El IC mide la correlacion de rango entre la prediccion del modelo
-    y el retorno real del mes siguiente. Valores tipicos en la literatura:
+    y el retorno real de la semana siguiente. Valores tipicos en la literatura:
       IC > 0.05  : senial debilmente util
       IC > 0.10  : senial moderadamente util
       IC > 0.15  : senial fuerte (raro en mercados eficientes)
@@ -105,7 +106,7 @@ def ic_summary(ic: pd.Series, label: str = "") -> dict:
         "ICIR"     : f"{icir:.3f}",
         "t-stat"   : f"{t_stat:.2f}",
         "Hit Rate" : f"{hit_rate:.1%}",
-        "N months" : len(ic_clean),
+        "N weeks"  : len(ic_clean),
     }
 
 
@@ -190,9 +191,9 @@ def quantile_returns(preds: pd.DataFrame, n_quantiles: int = 5) -> pd.DataFrame:
     return df.groupby("quintile")["return"].agg(["mean", "std", "count"]).reset_index()
 
 
-# ── Hit Rate por mes ──────────────────────────────────────────────────────────
+# ── Hit Rate por semana ───────────────────────────────────────────────────────
 
-def monthly_hit_rate(preds: pd.DataFrame) -> pd.Series:
+def hit_rate(preds: pd.DataFrame) -> pd.Series:
     """
     % de ETFs cuyo signo de prediccion coincide con el signo del retorno real.
     Complementa el IC: hit rate > 55% con IC > 0 indica senial util y consistente.
@@ -216,36 +217,36 @@ def plot_signal_evaluation(
 ):
     """
     4 paneles:
-      1. IC rolling 12m por modelo
-      2. IC mensual con banda ±1 std
+      1. IC rolling 52 semanas por modelo
+      2. IC semanal con banda ±1 std (rolling 52w)
       3. Retornos por quintil (Q1..Q5) — spread Q5-Q1
       4. Distribucion del IC (histograma)
     """
     fig, axes = plt.subplots(2, 2, figsize=(16, 10))
     fig.suptitle(
         "Evaluacion de Senales — Information Coefficient y Analisis de Quintiles\n"
-        "[OOS 2020-2024]",
+        "[OOS 2020-2024]  |  frecuencia semanal",
         fontsize=13, fontweight="bold",
     )
     colors = ["#2196f3", "#ff5722", "#4caf50", "#9c27b0"]
 
-    # ── Panel 1: IC rolling 12m ──────────────────────────────────────────────
+    # ── Panel 1: IC rolling 52 semanas ──────────────────────────────────────
     ax = axes[0, 0]
     for (label, ic), color in zip(ic_dict.items(), colors):
-        ic_roll = ic.rolling(12).mean()
+        ic_roll = ic.rolling(52).mean()
         ax.plot(ic_roll.index, ic_roll.values, label=label, lw=2, color=color)
     ax.axhline(0, color="black", lw=0.8, ls="--")
     ax.axhline(0.05, color="gray", lw=0.6, ls=":", label="IC=0.05 (umbral util)")
-    ax.set_title("IC Rolling 12 meses")
+    ax.set_title("IC Rolling 52 semanas (1 año)")
     ax.set_ylabel("IC (Spearman)")
     ax.legend(fontsize=8)
     ax.grid(True, alpha=0.3)
 
-    # ── Panel 2: IC mensual con banda ────────────────────────────────────────
+    # ── Panel 2: IC semanal con banda ────────────────────────────────────────
     ax = axes[0, 1]
     for (label, ic), color in zip(ic_dict.items(), colors):
-        roll_mean = ic.rolling(12).mean()
-        roll_std  = ic.rolling(12).std()
+        roll_mean = ic.rolling(52).mean()
+        roll_std  = ic.rolling(52).std()
         ax.plot(ic.index, ic.values, alpha=0.3, lw=0.8, color=color)
         ax.plot(roll_mean.index, roll_mean.values, lw=1.5, color=color, label=label)
         ax.fill_between(
@@ -254,7 +255,7 @@ def plot_signal_evaluation(
             alpha=0.12, color=color,
         )
     ax.axhline(0, color="black", lw=0.8, ls="--")
-    ax.set_title("IC Mensual (barras) y Media Rolling ±1σ")
+    ax.set_title("IC Semanal y Media Rolling 52w ±1σ")
     ax.set_ylabel("IC")
     ax.legend(fontsize=8)
     ax.grid(True, alpha=0.3)
@@ -275,7 +276,7 @@ def plot_signal_evaluation(
     ax.set_xticklabels([f"Q{i+1}" for i in range(5)])
     ax.axhline(0, color="black", lw=0.8)
     ax.set_title("Retorno Medio Real por Quintil de Prediccion\n(Q1=peor predicho, Q5=mejor)")
-    ax.set_ylabel("Retorno medio mensual (%)")
+    ax.set_ylabel("Retorno medio semanal (%)")
     ax.legend(fontsize=8)
     ax.yaxis.set_major_formatter(mtick.PercentFormatter(xmax=100, decimals=1))
     ax.grid(True, alpha=0.3, axis="y")
@@ -287,7 +288,7 @@ def plot_signal_evaluation(
         ax.hist(ic_clean, bins=20, alpha=0.5, color=color, label=f"{label} (mean={ic_clean.mean():.3f})")
     ax.axvline(0, color="black", lw=1, ls="--")
     ax.axvline(0.05, color="gray", lw=0.8, ls=":", label="IC=0.05")
-    ax.set_title("Distribucion del IC Mensual")
+    ax.set_title("Distribucion del IC Semanal")
     ax.set_xlabel("IC (Spearman)")
     ax.set_ylabel("Frecuencia")
     ax.legend(fontsize=8)
@@ -305,7 +306,9 @@ def evaluate_model(model_name: str, period: str = "OOS") -> tuple:
     """Carga predicciones de un modelo y calcula IC, quintiles y hit rate."""
     pred_path = f"{DATA_DIR}/predictions_{model_name}.csv"
     if not os.path.exists(pred_path):
-        print(f"[!] No encontrado: {pred_path}. Ejecuta primero 04_walk_forward_training.py")
+        script = "04b_regime_walk_forward.py" if model_name == "RegimeRF" \
+                 else "04_walk_forward_training.py"
+        print(f"[!] No encontrado: {pred_path}. Ejecuta primero {script}")
         return None, None, None
 
     preds = pd.read_csv(pred_path, parse_dates=["date"])
@@ -325,7 +328,7 @@ def evaluate_model(model_name: str, period: str = "OOS") -> tuple:
 
     ic     = compute_ic(preds)
     qdf    = quantile_returns(preds)
-    hr     = monthly_hit_rate(preds)
+    hr     = hit_rate(preds)
 
     # Resumen estadistico
     summary = ic_summary(ic, label)
@@ -341,7 +344,7 @@ if __name__ == "__main__":
     print("=" * 65 + "\n")
 
     # Modelos a evaluar: RF global, GB global y RF por regimen HMM
-    model_names = ["RandomForest", "GradientBoosting", "RegimeRF"]
+    model_names = ["LightGBM", "RandomForest", "GradientBoosting", "RegimeRF"]
 
     ic_dict       = {}
     quintile_dict = {}
@@ -372,7 +375,7 @@ if __name__ == "__main__":
             print(f"\n  IC por regimen ({model_name}):")
             print(regime_df.to_string(index=False))
 
-        # Guardar IC mensual
+        # Guardar IC semanal
         ic_out = f"{DATA_DIR}/signal_evaluation_IC_{model_name}.csv"
         ic.to_csv(ic_out, header=True)
         print(f"  IC guardado: {ic_out}")

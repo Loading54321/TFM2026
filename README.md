@@ -20,12 +20,12 @@ TFM codigo v2/
 ├── 01_data_download.py          Descarga ETFs (yfinance), macro (FRED), FF5
 ├── 02_feature_engineering.py    Construye panel long (date × etf) con features + target
 ├── 03_market_regime_detection.py Visualización HMM + CSV de respaldo + diagnósticos BIC
-├── 04_walk_forward_training.py   Walk-forward ML + HMM integrado (núcleo del pipeline)
+├── 04_walk_forward_training.py   Walk-forward LightGBM/RF/GB + HMM + EDA por régimen
 ├── 05_strategy_backtest.py       Backtest Long-Short Kelly, métricas vs SPY
 ├── 06_signal_evaluation.py       IC rolling, análisis quintiles, hit rate (Jansen cap.12)
 │
 ├── config.py                    Todos los parámetros centralizados
-├── models.py                    RandomForest, GradientBoosting, feature importance
+├── models.py                    RandomForest, GradientBoosting; LightGBM configurado en 04
 ├── regime_model.py              GaussianHMM: fit, forward filter, Viterbi, diagnósticos
 ├── utils.py                     Carga de datos, get_feature_cols, helpers
 │
@@ -41,8 +41,11 @@ TFM codigo v2/
     ├── features_panel_with_regime.csv
     ├── market_regimes.csv
     ├── market_regimes_plot.png
+    ├── predictions_LightGBM.csv
     ├── predictions_RandomForest.csv
     ├── predictions_GradientBoosting.csv
+    ├── eda_etf_by_regime.csv
+    ├── eda_etf_by_regime.png
     ├── feature_importance_*.csv
     ├── signal_evaluation_IC_*.csv
     ├── signal_evaluation_quintiles_*.csv
@@ -125,9 +128,21 @@ altamente correladas (problema documentado en la implementación con `ret_1m` + 
 - **Diagnósticos**: BIC, log-likelihood, convergencia EM, distribución de estados
 - **Visualización** (`03`): Viterbi global sobre IS+OOS para gráfico limpio
 
+### EDA por régimen de mercado
+
+Análisis exploratorio ejecutado antes del walk-forward (requiere
+`features_panel_with_regime.csv` de `03_market_regime_detection.py`):
+
+- **Tabla de retorno medio** del exceso vs SPY por ETF y régimen (Bear / Ranging / Bull)
+- **Líderes y rezagados** por fase del ciclo — responde directamente al requisito del enunciado
+- **Salidas**: `data/eda_etf_by_regime.csv` y `data/eda_etf_by_regime.png`
+- Usa exclusivamente el periodo IS (2008–2019), sin contaminación OOS
+
 ### Walk-Forward ML
 
-- **Modelos**: RandomForest y GradientBoosting (scikit-learn)
+- **Modelos**: LightGBM (principal), RandomForest y GradientBoosting (scikit-learn)
+  - LightGBM: referenciado explícitamente en Jansen (2020), cap. 12, notebook 05;
+    histogram-based, regularización L1/L2, más rápido que sklearn GB
 - **Ventana ML**: expansiva desde `TRAIN_START` (Jan 2008) hasta t−1
 - **OOS**: Jan 2020 – Dic 2024 (60 meses)
 - **Modelo clonado** en cada iteración (sin estado compartido)
@@ -231,6 +246,9 @@ python 06_signal_evaluation.py   # evaluación de señales independiente
 | `TOP_N` / `BOTTOM_N` | 3 / 3 | ETFs long / short por mes |
 | `RANDOM_SEED` | 42 | Reproducibilidad |
 | `N_ITER` (HMM) | 500 | Iteraciones EM (convergencia típica <200) |
+| LightGBM `n_estimators` | 500 | Árboles LightGBM |
+| LightGBM `learning_rate` | 0.05 | Igual que sklearn GB (comparación justa) |
+| LightGBM `num_leaves` | 31 | Complejidad del árbol (~max_depth=5 sklearn) |
 
 ---
 

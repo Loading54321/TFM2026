@@ -11,7 +11,28 @@ Evita código duplicado:
 
 import pandas as pd
 import numpy as np
-from config import DATA_DIR
+from config import DATA_DIR, ML_TRAIN_EXCLUDE_PERIODS
+
+
+# ============================================================================
+# ENTRENAMIENTO ML (exclusiones de fechas)
+# ============================================================================
+
+def ml_train_date_kept(dates: pd.Series) -> pd.Series:
+    """
+    True donde la fila puede usarse en el fit de modelos supervisados.
+
+    Aplica ML_TRAIN_EXCLUDE_PERIODS de config (p. ej. pandemia 2020-2021).
+    No afecta al HMM ni a la descarga de datos.
+    """
+    if not ML_TRAIN_EXCLUDE_PERIODS:
+        return pd.Series(True, index=dates.index)
+    ok = pd.Series(True, index=dates.index)
+    for start, end in ML_TRAIN_EXCLUDE_PERIODS:
+        ts0 = pd.Timestamp(start)
+        ts1 = pd.Timestamp(end)
+        ok &= ~((dates >= ts0) & (dates <= ts1))
+    return ok
 
 
 # ============================================================================
@@ -104,29 +125,6 @@ def get_feature_cols(panel: pd.DataFrame) -> list:
     exclude = {"date", "etf", "target", "return"}
     return [c for c in panel.columns if c not in exclude]
 
-
-
-# ============================================================================
-# UTILIDADES GENERALES
-# ============================================================================
-
-def ensure_monthly_frequency(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Valida que DataFrame tiene frecuencia mensual.
-    
-    Args:
-        df: DataFrame con índice de tiempo
-        
-    Returns:
-        DataFrame (sin cambios si es válido)
-        
-    Raises:
-        ValueError: Si no es frecuencia mensual
-    """
-    freq = df.index.to_series().diff().dt.days.median()
-    if not (25 <= freq <= 35):
-        raise ValueError(f"Frecuencia sospechosa: {freq} días (esperado ~30)")
-    return df
 
 
 def get_oos_dates(panel: pd.DataFrame, oos_start: str, oos_end: str) -> list:
