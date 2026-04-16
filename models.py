@@ -1,28 +1,37 @@
 """
 models.py
 =========
-Define los modelos de machine learning (RandomForest y GradientBoosting)
-y funciones auxiliares para entrenamiento y evaluación.
+Define los modelos de machine learning y funciones auxiliares para
+entrenamiento y evaluación.
 
 Modelos disponibles:
-  - RandomForest: n_estimators=200, max_depth=5
-  - GradientBoosting: n_estimators=200, max_depth=3
+  - RandomForest : n_estimators=200, max_depth=5  (sklearn, baseline ensemble)
+  - LightGBM     : n_estimators=500, num_leaves=31 (histogram-based GB, Jansen 2020 cap.12)
+
+Configuración centralizada en config.py (RF_CONFIG, LGBM_CONFIG).
+LGBM_AVAILABLE=False si lightgbm no está instalado — el proyecto sigue
+funcionando solo con RandomForest.
 """
 
 import pandas as pd
 from sklearn.base import clone
-from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
+from sklearn.ensemble import RandomForestRegressor
 from sklearn.preprocessing import StandardScaler
 from sklearn.pipeline import Pipeline
 
-from config import RF_CONFIG, GB_CONFIG, RANDOM_SEED, DATA_DIR
+try:
+    from lightgbm import LGBMRegressor
+    LGBM_AVAILABLE = True
+except ImportError:
+    LGBM_AVAILABLE = False
+
+from config import RF_CONFIG, LGBM_CONFIG, RANDOM_SEED, DATA_DIR
 from utils import ml_train_date_kept
 
-# Configuración de modelos
-MODELS = {
-    "RandomForest": RandomForestRegressor(**RF_CONFIG),
-    "GradientBoosting": GradientBoostingRegressor(**GB_CONFIG),
-}
+# Diccionario unificado de modelos disponibles
+MODELS: dict = {"RandomForest": RandomForestRegressor(**RF_CONFIG)}
+if LGBM_AVAILABLE:
+    MODELS["LightGBM"] = LGBMRegressor(**LGBM_CONFIG)
 
 
 def build_pipeline(model) -> Pipeline:
@@ -57,7 +66,7 @@ def feature_importance_report(
     panel : pd.DataFrame
         DataFrame con las features y target
     model_name : str
-        Nombre del modelo ("RandomForest" o "GradientBoosting")
+        Nombre del modelo ("RandomForest" o "LightGBM")
     train_start : str
         Fecha de inicio del período de entrenamiento
     train_end : str

@@ -6,11 +6,10 @@ Frecuencia: semanal (W-FRI). ~260 semanas OOS.
 
 Modelos soportados
 ──────────────────
-  LightGBM         Modelo principal (Jansen 2020, cap. 12, notebook 05).
-                   Histogram-based gradient boosting: más rápido y con mejor
-                   regularización que el GB de sklearn.
-  RandomForest     Ensemble de árboles paralelos (baseline sólido).
-  GradientBoosting Gradient Boosting de sklearn (comparación con LightGBM).
+  LightGBM     Modelo principal (Jansen 2020, cap. 12, notebook 05).
+               Histogram-based gradient boosting: rápido y con regularización
+               L1/L2 integrada; superior a sklearn GB en este contexto.
+  RandomForest Ensemble de árboles paralelos (baseline sólido).
 
 Arquitectura de ventanas separadas
 ────────────────────────────────────
@@ -56,78 +55,18 @@ import matplotlib.ticker as mtick
 import warnings
 warnings.filterwarnings("ignore")
 
-# ── LightGBM (modelo principal, referenciado en Jansen cap. 12) ──────────────
-try:
-    from lightgbm import LGBMRegressor
-    LGBM_AVAILABLE = True
-except ImportError:
-    LGBM_AVAILABLE = False
-    print(
-        "[WARN] lightgbm no instalado. Instala con: pip install lightgbm\n"
-        "       El script continuará solo con RandomForest y GradientBoosting."
-    )
-
-from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
-from sklearn.base import clone
-from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import StandardScaler
-
 from config import (
     DATA_DIR, TRAIN_START, OOS_START, OOS_END,
     TOP_N, MIN_TRAIN_PERIODS, HMM_CONTEXT_PERIODS,
-    RF_CONFIG, GB_CONFIG, RANDOM_SEED, DEV_MODE,
-    ML_TRAIN_EXCLUDE_PERIODS,
+    RANDOM_SEED, DEV_MODE, ML_TRAIN_EXCLUDE_PERIODS,
 )
 from utils import load_panel, get_feature_cols, ml_train_date_kept
+from models import MODELS as MODELS_ALL, build_pipeline, LGBM_AVAILABLE
 from regime_model import (
     load_spy_features, fit_hmm, label_mapping,
     decode_is_states, get_regime_from_context_window,
     OBS_COLS, REGIME_NAMES,
 )
-
-
-# ── Configuración de modelos ──────────────────────────────────────────────────
-
-# Hiperparámetros LightGBM alineados con Jansen (2020), cap. 12, notebook 05.
-# num_leaves=31 equivale aproximadamente a max_depth=5 en sklearn GB.
-# subsample + colsample_bytree: bagging de filas y features para reducir overfitting.
-# lambda_l1 / lambda_l2: regularización adicional no disponible en sklearn GB.
-# DEV_MODE=True → 100 árboles (vs 500); 5× más rápido manteniendo histogramas.
-LGBM_CONFIG = {
-    "n_estimators"     : 100 if DEV_MODE else 500,
-    "learning_rate"    : 0.05,
-    "num_leaves"       : 31,
-    "max_depth"        : -1,
-    "min_child_samples": 10,
-    "subsample"        : 0.8,
-    "colsample_bytree" : 0.8,
-    "lambda_l1"        : 0.1,
-    "lambda_l2"        : 1.0,
-    "random_state"     : RANDOM_SEED,
-    "n_jobs"           : -1,
-    "verbose"          : -1,
-}
-
-MODELS_ALL = {
-    "RandomForest"     : RandomForestRegressor(**RF_CONFIG),
-    "GradientBoosting" : GradientBoostingRegressor(**GB_CONFIG),
-}
-if LGBM_AVAILABLE:
-    MODELS_ALL["LightGBM"] = LGBMRegressor(**LGBM_CONFIG)
-
-
-def build_pipeline_local(model) -> Pipeline:
-    """
-    Pipeline scaler → estimador clonado.
-
-    NaN en features se cubren con ffill en 02_feature_engineering.py;
-    los NaN iniciales (primeras 52 semanas por ETF) se descartan antes
-    de llegar aquí vía dropna(subset=["target"]).
-    """
-    return Pipeline([
-        ("scaler", StandardScaler()),
-        ("model",  clone(model)),
-    ])
 
 
 # ── EDA: Rendimiento de ETFs por régimen / ciclo económico ───────────────────
@@ -348,7 +287,7 @@ def walk_forward_predict(
     Parámetros
     ----------
     panel              : DataFrame panel long con features y target
-    model_name         : 'LightGBM' | 'RandomForest' | 'GradientBoosting'
+    model_name         : 'LightGBM' | 'RandomForest'
     min_train_periods  : semanas mínimas de historia antes de empezar OOS
     data_dir           : directorio de datos
 
@@ -436,7 +375,7 @@ def walk_forward_predict(
         X_pred = pred_data[feat_cols].values
 
         # ── 4. Clon fresco del modelo + entrenamiento + predicción ────────────
-        pipe = build_pipeline_local(model_tmpl)
+        pipe = build_pipeline(model_tmpl)
         pipe.fit(X_train, y_train)
         pred_data["predicted_return"] = pipe.predict(X_pred)
         pred_data["rank"] = pred_data["predicted_return"].rank(ascending=False).astype(int)
@@ -483,7 +422,7 @@ def feature_importance_report(
     ].dropna(subset=["target"])
     train = train[ml_train_date_kept(train["date"])]
 
-    pipe = build_pipeline_local(MODELS_ALL[model_name])
+    pipe = build_pipeline(MODELS_ALL[model_name])
     pipe.fit(train[feat_cols].values, train["target"].values)
 
     importances = pd.Series(
@@ -506,7 +445,7 @@ if __name__ == "__main__":
 
     print("\n" + "=" * 65)
     print("  04_walk_forward_training.py")
-    print("  LightGBM · RandomForest · GradientBoosting + EDA por régimen")
+    print("  LightGBM · RandomForest + EDA por régimen")
     print("=" * 65)
 
     # ── Cargar panel base (sin régimen; se asigna en el walk-forward) ─────────
@@ -526,18 +465,10 @@ if __name__ == "__main__":
             "      Continuando sin EDA..."
         )
 
-    # ── Walk-Forward: LightGBM (principal), RandomForest y GradientBoosting ──
-    # DEV_MODE=True → se omite GradientBoosting (single-thread, el más lento)
-    models_to_run = []
-    if LGBM_AVAILABLE:
-        models_to_run.append("LightGBM")
-    else:
+    # ── Walk-Forward: LightGBM (principal) y RandomForest (baseline) ─────────
+    models_to_run = list(MODELS_ALL.keys())   # ["RandomForest"] o ["RandomForest","LightGBM"]
+    if not LGBM_AVAILABLE:
         print("\n[!] LightGBM no disponible. Instala: pip install lightgbm")
-    models_to_run.append("RandomForest")
-    if not DEV_MODE:
-        models_to_run.append("GradientBoosting")
-    else:
-        print("\n[DEV] GradientBoosting omitido en DEV_MODE (activa DEV_MODE=False en config.py para incluirlo)")
 
     for model_name in models_to_run:
         print(f"\n{'='*65}")
@@ -548,10 +479,6 @@ if __name__ == "__main__":
 
     print(f"\n{'='*65}")
     print("  [OK] Walk-forward completado.")
-    if LGBM_AVAILABLE:
-        print("  Modelos ejecutados: LightGBM, RandomForest, GradientBoosting")
-    else:
-        print("  Modelos ejecutados: RandomForest, GradientBoosting")
-        print("  PENDIENTE: instalar lightgbm (pip install lightgbm)")
-    print("  Continúa con 05_strategy_backtest.py y 06_signal_evaluation.py")
+    print(f"  Modelos ejecutados: {', '.join(models_to_run)}")
+    print("  Continua con 05_strategy_backtest.py y 06_signal_evaluation.py")
     print("=" * 65)

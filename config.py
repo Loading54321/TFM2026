@@ -89,15 +89,22 @@ RF_CONFIG = {
     "n_jobs": -1,
 }
 
-# Gradient Boosting
-# DEV_MODE=True → 50 árboles (vs 200); 4× más rápido (GB es single-thread)
-GB_CONFIG = {
-    "n_estimators": 50 if DEV_MODE else 200,
-    "max_depth": 3,
-    "learning_rate": 0.05,
-    "subsample": 0.8,
-    "min_samples_leaf": 10,
-    "random_state": RANDOM_SEED,
+# LightGBM (histogram-based gradient boosting, Jansen 2020 cap. 12)
+# DEV_MODE=True → 100 árboles (vs 500); 5× más rápido manteniendo histogramas.
+# num_leaves=31 ≈ max_depth=5 en sklearn. lambda_l1/l2: regularización adicional.
+LGBM_CONFIG = {
+    "n_estimators"     : 100 if DEV_MODE else 500,
+    "learning_rate"    : 0.05,
+    "num_leaves"       : 31,
+    "max_depth"        : -1,
+    "min_child_samples": 10,
+    "subsample"        : 0.8,
+    "colsample_bytree" : 0.8,
+    "lambda_l1"        : 0.1,
+    "lambda_l2"        : 1.0,
+    "random_state"     : RANDOM_SEED,
+    "n_jobs"           : -1,
+    "verbose"          : -1,
 }
 
 

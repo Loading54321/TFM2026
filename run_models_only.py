@@ -7,33 +7,35 @@ engineering, que son los pasos más lentos y solo son necesarios una vez).
 Útil cuando los datos ya están preparados (features_panel.csv existe).
 
 Orden de ejecución:
-  4.  Walk-Forward RF/GB global  -> predictions_RandomForest.csv
-                                    predictions_GradientBoosting.csv
-  4b. Walk-Forward 3 RF Régimen  -> predictions_RegimeRF.csv
-  3.  Visualización regímenes    -> market_regimes_plot.png + CSVs
-  5.  Strategy Backtest          -> métricas + backtest_chart.png
-  6.  Signal Evaluation (IC)     -> IC, quintiles + signal_evaluation_plot.png
-  C.  Comparación de estrategias -> comparison_chart.png + tabla anual
+  3.  Visualización regímenes HMM  -> market_regimes_plot.png + CSVs
+  4.  Walk-Forward LightGBM/RF     -> predictions_LightGBM.csv
+                                      predictions_RandomForest.csv
+                                      eda_etf_by_regime.csv / .png
+  4b. Walk-Forward 3 RF Régimen    -> predictions_RegimeRF.csv
+  5.  Strategy Backtest            -> métricas + backtest_chart.png
+  6.  Signal Evaluation (IC)       -> IC, quintiles + signal_evaluation_plot.png
+  C.  Comparación de estrategias   -> comparison_chart.png + tabla anual
 
 Para un pipeline completo (con descarga y FE):
   python run_all.py
 """
 
 import os
-import sys
 import time
 
-_here    = os.path.dirname(os.path.abspath(__file__))
-_venv_py = os.path.join(_here, ".venv", "Scripts", "python.exe")
-PYTHON   = f'"{_venv_py}"' if os.path.exists(_venv_py) else f'"{sys.executable}"'
+_here = os.path.dirname(os.path.abspath(__file__))
+
+from utils import build_runner
+
+RUNNER = build_runner("run_models_only")
 
 STEPS = [
-    ("4.  Walk-Forward RF/GB (global)",   "04_walk_forward_training.py"),
-    ("4b. Walk-Forward 3 RF por Régimen", "04b_regime_walk_forward.py"),
-    ("3.  Visualización regímenes HMM",   "03_market_regime_detection.py"),
-    ("5.  Strategy Backtest",             "05_strategy_backtest.py"),
-    ("6.  Signal Evaluation (IC)",        "06_signal_evaluation.py"),
-    ("C.  Comparación de estrategias",    "compare_strategies.py"),
+    ("3.  Visualización regímenes HMM",       "03_market_regime_detection.py"),
+    ("4.  Walk-Forward LightGBM/RF + EDA",    "04_walk_forward_training.py"),
+    ("4b. Walk-Forward 3 RF por Régimen",     "04b_regime_walk_forward.py"),
+    ("5.  Strategy Backtest",                 "05_strategy_backtest.py"),
+    ("6.  Signal Evaluation (IC)",            "06_signal_evaluation.py"),
+    ("C.  Comparación de estrategias",        "compare_strategies.py"),
 ]
 
 if __name__ == "__main__":
@@ -43,12 +45,12 @@ if __name__ == "__main__":
     for step_name, script in STEPS:
         print(f"\n{'-'*60}")
         print(f"  {step_name}")
-        print(f"{'-'*60}")
+        print(f"{'-'*60}", flush=True)
         t0  = time.time()
-        ret = os.system(f'cd /d "{_here}" && {PYTHON} {script}')
+        ret = os.system(f'cd /d "{_here}" && {RUNNER} {script}')
         elapsed = time.time() - t0
         if ret != 0:
-            print(f"[ERROR] {script} falló. Pipeline detenido.")
+            print(f"[ERROR] {script} (exit code {ret}). Pipeline detenido.")
             break
         print(f"  [OK] Completado en {elapsed:.1f}s")
 

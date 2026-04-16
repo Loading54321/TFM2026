@@ -9,6 +9,8 @@ Evita código duplicado:
   - Cálculos estándares
 """
 
+import os
+import sys
 import pandas as pd
 import numpy as np
 from config import DATA_DIR, ML_TRAIN_EXCLUDE_PERIODS
@@ -142,3 +144,68 @@ def get_oos_dates(panel: pd.DataFrame, oos_start: str, oos_end: str) -> list:
     mask = (panel["date"] >= oos_start) & (panel["date"] <= oos_end)
     dates = sorted(panel[mask]["date"].unique())
     return dates
+
+
+# ============================================================================
+# FILTRO DE FRECUENCIA
+# ============================================================================
+
+def last_friday_of_month(preds: pd.DataFrame) -> pd.DataFrame:
+    """
+    Filtra predicciones semanales (W-FRI) al último viernes de cada mes.
+
+    Usado por build_portfolio (05_strategy_backtest) y analyze_shorts para
+    convertir predicciones semanales en decisiones mensuales de asignación,
+    manteniendo estricto anti-leakage (solo usa la última observación
+    disponible al cierre de cada mes).
+
+    Args:
+        preds: DataFrame con columna 'date' a frecuencia semanal.
+
+    Returns:
+        DataFrame filtrado con una fila por (mes × etf), correspondiente al
+        último viernes disponible de cada mes.
+    """
+    preds = preds.copy()
+    preds["_month"] = preds["date"].dt.to_period("M")
+    preds = preds.loc[
+        preds.groupby("_month")["date"].transform("max") == preds["date"]
+    ].drop(columns=["_month"])
+    return preds
+
+
+# ============================================================================
+# ENTORNO DE EJECUCION
+# ============================================================================
+
+def build_runner(caller: str = "") -> str:
+    """
+    Construye el comando Python correcto para el entorno conda tfm-ml-trading.
+
+    Busca el ejecutable de conda en las rutas estándar de Anaconda/Miniconda
+    y verifica que el entorno 'tfm-ml-trading' esté creado.
+
+    Fallback: sys.executable (Python que lanzó el script) si conda o el
+    entorno no se encuentran.
+
+    Args:
+        caller: Nombre del script que llama (para el mensaje de log).
+
+    Returns:
+        Cadena con el comando completo listo para os.system().
+    """
+    label = f"[{caller}]" if caller else "[runner]"
+    for candidate in [
+        os.path.expanduser(r"~\anaconda3\Scripts\conda.exe"),
+        os.path.expanduser(r"~\miniconda3\Scripts\conda.exe"),
+        r"C:\ProgramData\anaconda3\Scripts\conda.exe",
+        r"C:\ProgramData\miniconda3\Scripts\conda.exe",
+    ]:
+        if os.path.exists(candidate):
+            envs_dir = os.path.join(os.path.dirname(os.path.dirname(candidate)), "envs")
+            if os.path.isdir(os.path.join(envs_dir, "tfm-ml-trading")):
+                print(f"{label} Entorno: conda tfm-ml-trading (Python 3.11)")
+                return f'"{candidate}" run --no-capture-output -n tfm-ml-trading python'
+
+    print(f"{label} Entorno conda 'tfm-ml-trading' no encontrado. Usando Python del sistema.")
+    return f'"{sys.executable}"'

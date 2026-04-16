@@ -30,7 +30,7 @@ Metricas implementadas (sin alphalens, puro pandas/scipy):
      Complementa el IC: un modelo puede tener IC bajo pero hit rate alto.
 
 Modelos evaluados:
-  RandomForest, GradientBoosting, RegimeRF (3 RF por regimen HMM)
+  LightGBM, RandomForest, RegimeRF (3 RF por regimen HMM)
 
 Genera:
   data/signal_evaluation_IC_{model}.csv        IC semanal por modelo
@@ -344,7 +344,7 @@ if __name__ == "__main__":
     print("=" * 65 + "\n")
 
     # Modelos a evaluar: RF global, GB global y RF por regimen HMM
-    model_names = ["LightGBM", "RandomForest", "GradientBoosting", "RegimeRF"]
+    model_names = ["LightGBM", "RandomForest", "RegimeRF"]
 
     ic_dict       = {}
     quintile_dict = {}
