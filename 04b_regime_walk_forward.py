@@ -30,7 +30,7 @@ Anti-leakage verificado
 
 Salida
 ━━━━━━
-  data/predictions_RegimeRF.csv
+  data/predictions_RegimeLGBM.csv
     Columnas: date, etf, predicted_return, rank, target,
               regime, regime_name, model_used,
               bear_prob, ranging_prob, bull_prob
@@ -57,7 +57,7 @@ from regime_model import (
 
 # ── Parámetros del módulo ─────────────────────────────────────────────────────
 
-# Mínimo de filas del panel por régimen para entrenar RF_k.
+# Mínimo de filas del panel por régimen para entrenar LGBM_k.
 # Con 11 ETFs y ~35 semanas por régimen → ~385 filas.
 MIN_REGIME_OBS = 385       # ≈ 35 semanas × 11 ETFs
 
@@ -192,26 +192,26 @@ def walk_forward_regime_models(
     Por cada semana OOS t:
       1. Ajusta HMM en [TRAIN_START, t)  →  parámetros aprendidos del pasado
       2. Etiqueta régimen de cada semana de train con forward filter causal
-      3. Entrena RF_k sobre las semanas donde argmax régimen == k (k=0,1,2)
-      4. Entrena RF_global sobre todas las semanas de train (fallback)
+      3. Entrena LGBM_k sobre las semanas donde argmax régimen == k (k=0,1,2)
+      4. Entrena LGBM_global sobre todas las semanas de train (fallback)
       5. Avanza filter hasta t → régimen_t
-      6. Predice con RF_{régimen_t} o RF_global si RF_k no disponible
+      6. Predice con LGBM_{régimen_t} o LGBM_global si LGBM_k no disponible
 
     Parámetros
     ----------
     panel              : DataFrame panel long (date × etf) con features y target
     min_train_periods  : semanas mínimas de entrenamiento antes de empezar OOS
     regime_threshold   : umbral de probabilidad (0 = argmax, >0 = threshold)
-    min_regime_obs     : filas mínimas del panel por régimen para entrenar RF_k
+    min_regime_obs     : filas mínimas del panel por régimen para entrenar LGBM_k
     data_dir           : directorio de datos
 
     Devuelve
     --------
-    DataFrame con predicciones OOS  (guardado también en predictions_RegimeRF.csv)
+    DataFrame con predicciones OOS  (guardado también en predictions_RegimeLGBM.csv)
     """
     spy_df    = load_spy_features(data_dir)
     feat_cols = get_feature_cols(panel)
-    rf_tmpl   = MODELS["LightGBM"]
+    lgbm_tmpl = MODELS["LightGBM"]
     n_etfs    = panel["etf"].nunique()
 
     oos_dates = sorted(panel.loc[
@@ -283,14 +283,14 @@ def walk_forward_regime_models(
             n_obs = len(regime_data)
 
             if n_obs >= min_regime_obs:
-                pipe_k = build_pipeline(rf_tmpl)
+                pipe_k = build_pipeline(lgbm_tmpl)
                 pipe_k.fit(regime_data[feat_cols].values, regime_data["target"].values)
                 regime_models[k] = pipe_k
             else:
                 regime_models[k] = None  # insuficiente → usará fallback
 
         # ── 4. Fallback global (todos los datos de train) ─────────────────────
-        pipe_global = build_pipeline(rf_tmpl)
+        pipe_global = build_pipeline(lgbm_tmpl)
         pipe_global.fit(train_data[feat_cols].values, train_data["target"].values)
 
         # ── 5. Régimen actual en t (forward filter un paso más) ───────────────

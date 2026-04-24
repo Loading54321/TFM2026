@@ -9,7 +9,7 @@ Orden de ejecucion:
   4.  Walk-Forward LightGBM/RF + EDA  -> predictions_LightGBM.csv
                                          predictions_RandomForest.csv
                                          eda_etf_by_regime.csv / .png
-  4b. Walk-Forward 3 RF por Régimen   -> predictions_RegimeRF.csv
+  4b. Walk-Forward 3 LGBM por Régimen -> predictions_RegimeLGBM.csv
   3.  Visualizacion regimenes HMM     -> market_regimes_plot.png + CSVs
   5.  Strategy Backtest               -> metricas + backtest_chart.png
   6.  Signal Evaluation (IC)          -> IC, quintiles + signal_evaluation_plot.png
@@ -39,8 +39,8 @@ STEPS = [
     # ("1.  Descarga de datos",             "01_data_download.py"),   # omitir si ya existe
     ("2.  Feature Engineering",           "02_feature_engineering.py"),
     ("4.  Walk-Forward LightGBM/RF + EDA",    "04_walk_forward_training.py"),
-    ("4b. Walk-Forward 3 RF por Regimen", "04b_regime_walk_forward.py"),
-    ("3.  Visualizacion regimenes HMM",   "03_market_regime_detection.py"),
+    ("4b. Walk-Forward 3 LGBM por Regimen", "04b_regime_walk_forward.py"),
+    ("3.  Visualizacion regimenes HMM",     "03_market_regime_detection.py"),
     ("5.  Strategy Backtest",             "05_strategy_backtest.py"),
     ("6.  Signal Evaluation (IC)",        "06_signal_evaluation.py"),
     ("C.  Comparacion de estrategias",    "compare_strategies.py"),

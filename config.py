@@ -26,7 +26,7 @@ load_dotenv()
 # ============================================================================
 # MODO DESARROLLO  ← cambiar a False para la ejecución final del TFM
 # ============================================================================
-DEV_MODE = True
+DEV_MODE = False
 
 # ============================================================================
 # DIRECTORIOS
@@ -134,7 +134,7 @@ KELLY_FRACTION = 0.5            # fracción half-Kelly para ponderación multi-a
 # Ventana causal (en SEMANAS) para estimar var_i en la ponderación Half-Kelly.
 # 36 semanas ≈ 9 meses: suficiente historia para estimar varianza de forma
 # estable pero reactiva ante cambios recientes de régimen de volatilidad.
-# Usada en 05_strategy_backtest.py, compare_strategies.py y analyze_shorts.py.
+# Usada en 05_strategy_backtest.py y compare_strategies.py.
 KELLY_LOOKBACK_WEEKS = 36
 
 # ── Costos de transacción ─────────────────────────────────────────────────────
