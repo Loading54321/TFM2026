@@ -1,35 +1,36 @@
 """
 analyze_shorts.py
 =================
-Diagnóstico detallado de la pata corta (Bottom-3) del portafolio.
+Diagnóstico detallado de la pata corta (Bottom-N) del portafolio SEMANAL.
 
-Genera data/shorts_analysis.csv con una fila por (fecha × modelo × ETF bottom-3),
+Genera data/shorts_analysis.csv con una fila por (fecha × modelo × ETF bottom-N),
 reproduciendo exactamente la misma lógica de selección, filtrado y ponderación
 que build_portfolio() en 05_strategy_backtest.py:
 
   Filtro AND:
     (1) pred < 0
-    (2) |pred| > pred_Top1  (predicción del ETF mejor rankeado ese mes)
+    (2) |pred| > pred_Top1  (predicción del ETF mejor rankeado esa semana)
 
-  Peso: simple_kelly_weights() — Half-Kelly diagonal por activo, normalizado.
+  Peso: simple_kelly_weights() — Half-Kelly diagonal por activo, normalizado,
+        con ventana causal KELLY_LOOKBACK_WEEKS (config.py).
 
 Columnas del CSV:
-  date                 último viernes del mes (fecha de decisión)
-  model                LightGBM / RandomForest / RegimeRF
+  date                 viernes W-FRI (fecha de decisión)
+  model                LightGBM / RandomForest / RegimeLGBM
   etf                  ticker del candidato a short
-  rank                 posición en el ranking ese mes (mayor = peor)
+  rank                 posición en el ranking esa semana (mayor = peor)
   pred                 predicted_return del modelo
-  top1_etf             ticker del ETF #1 ese mes (umbral del filtro)
+  top1_etf             ticker del ETF #1 esa semana (umbral del filtro)
   pred_top1            predicted_return del ETF #1 (umbral)
-  top3_pred_mean       media de pred del Top-3 (referencia vs filtro anterior)
-  top3_etfs            tickers Top-3 separados por |
+  top3_pred_mean       media de pred del Top-N (referencia vs filtro anterior)
+  top3_etfs            tickers Top-N separados por |
   cond1_pred_neg       pred < 0
   cond2_abs_gt_top1    |pred| > pred_top1
   passed_filter        cond1 AND cond2
-  etf_var_36m          varianza histórica 36m usada en Half-Kelly
-  half_kelly_scalar    0.5 * |pred| / var  (antes de normalizar)
+  etf_var_weeks        varianza histórica (ventana KELLY_LOOKBACK_WEEKS) usada en Half-Kelly
+  half_kelly_scalar    KELLY_FRACTION * |pred| / var  (antes de normalizar)
   weight               peso final asignado (0 si no pasó el filtro)
-  actual_return        retorno real del ETF el mes siguiente (columna target)
+  actual_return        retorno real del ETF la semana siguiente (target)
   short_contribution   -weight * actual_return  (>0 = short ganó dinero)
   short_profitable     actual_return < 0  (el ETF bajó: short hubiera ganado)
 """
@@ -41,24 +42,22 @@ import warnings
 warnings.filterwarnings("ignore")
 
 from importlib import import_module
-from config import DATA_DIR, TOP_N, BOTTOM_N, KELLY_FRACTION
-from utils import last_friday_of_month
+from config import DATA_DIR, TOP_N, BOTTOM_N, KELLY_FRACTION, KELLY_LOOKBACK_WEEKS
+from utils import weekly_forward_returns
 
 _bt = import_module("05_strategy_backtest")
 simple_kelly_weights = _bt.simple_kelly_weights
 
 PRICES_PATH = f"{DATA_DIR}/etf_prices.csv"
 OUT_PATH    = f"{DATA_DIR}/shorts_analysis.csv"
-LOOKBACK    = 36
 
 
 def analyze_model(model_name: str, pred_path: str, prices: pd.DataFrame) -> list:
-    preds = pd.read_csv(pred_path, parse_dates=["date"])
-    preds = last_friday_of_month(preds)
+    preds      = pd.read_csv(pred_path, parse_dates=["date"])
+    pred_dates = sorted(preds["date"].unique())
 
-    monthly_dates  = sorted(preds["date"].unique())
-    prices_monthly = prices.reindex(monthly_dates).ffill()
-    actual_returns = prices_monthly.pct_change().shift(-1)
+    # Retornos t→t+1 alineados al índice semanal de decisión (sin lookahead)
+    actual_returns = weekly_forward_returns(prices, pred_dates)
 
     rows = []
 
@@ -83,8 +82,8 @@ def analyze_model(model_name: str, pred_path: str, prices: pd.DataFrame) -> list
                 return np.nan
 
         # Varianza histórica causal para cada ETF (misma ventana que simple_kelly_weights)
-        hist_ret = prices_monthly[bottom_etfs].pct_change().dropna()
-        hist_ret = hist_ret.loc[hist_ret.index <= date].tail(LOOKBACK)
+        hist_ret = prices[bottom_etfs].pct_change().dropna()
+        hist_ret = hist_ret.loc[hist_ret.index <= date].tail(KELLY_LOOKBACK_WEEKS)
 
         def _var(etf):
             if etf not in hist_ret.columns:
@@ -116,8 +115,8 @@ def analyze_model(model_name: str, pred_path: str, prices: pd.DataFrame) -> list
             if long_etfs_avail:
                 _, short_w = simple_kelly_weights(
                     long_etfs_avail, short_etfs_filtered,
-                    pred_by_etf, prices_monthly, date,
-                    lookback=LOOKBACK, kelly_fraction=KELLY_FRACTION,
+                    pred_by_etf, prices, date,
+                    lookback=KELLY_LOOKBACK_WEEKS, kelly_fraction=KELLY_FRACTION,
                 )
                 weight_map = short_w.to_dict()
             else:
@@ -149,7 +148,7 @@ def analyze_model(model_name: str, pred_path: str, prices: pd.DataFrame) -> list
                 "cond1_pred_neg"    : cond_results[etf]["c1"],
                 "cond2_abs_gt_top1" : cond_results[etf]["c2"],
                 "passed_filter"     : passed,
-                "etf_var_36m"       : round(var_val, 8) if not np.isnan(var_val) else np.nan,
+                "etf_var_weeks"     : round(var_val, 8) if not np.isnan(var_val) else np.nan,
                 "half_kelly_scalar" : round(hk, 4),
                 "weight"            : round(weight, 6),
                 "actual_return"     : round(actual, 6) if not np.isnan(actual) else np.nan,
@@ -167,7 +166,7 @@ def main():
     models = {
         "LightGBM"    : f"{DATA_DIR}/predictions_LightGBM.csv",
         "RandomForest": f"{DATA_DIR}/predictions_RandomForest.csv",
-        "RegimeRF"    : f"{DATA_DIR}/predictions_RegimeRF.csv",
+        "RegimeLGBM"  : f"{DATA_DIR}/predictions_RegimeLGBM.csv",
     }
 
     all_rows = []
@@ -186,7 +185,7 @@ def main():
 
     df.to_csv(OUT_PATH, index=False)
     print(f"\n[OK] CSV guardado: {OUT_PATH}")
-    print(f"     {len(df)} filas | {df['model'].nunique()} modelos | {df['date'].nunique()} meses")
+    print(f"     {len(df)} filas | {df['model'].nunique()} modelos | {df['date'].nunique()} semanas")
 
     # Resumen rápido en consola
     print("\n-- Resumen por modelo --------------------------------------------------")

@@ -147,31 +147,34 @@ def get_oos_dates(panel: pd.DataFrame, oos_start: str, oos_end: str) -> list:
 
 
 # ============================================================================
-# FILTRO DE FRECUENCIA
+# RETORNOS FUTUROS ALINEADOS (t+1 semana)
 # ============================================================================
 
-def last_friday_of_month(preds: pd.DataFrame) -> pd.DataFrame:
+def weekly_forward_returns(
+    prices: pd.DataFrame,
+    dates: list | pd.Index,
+) -> pd.DataFrame:
     """
-    Filtra predicciones semanales (W-FRI) al último viernes de cada mes.
+    Retornos semanales causales desfasados un periodo hacia adelante (t+1).
 
-    Usado por build_portfolio (05_strategy_backtest) y analyze_shorts para
-    convertir predicciones semanales en decisiones mensuales de asignación,
-    manteniendo estricto anti-leakage (solo usa la última observación
-    disponible al cierre de cada mes).
+    Para cada fecha t en `dates`, la fila devuelta contiene el retorno entre
+    el cierre de t y el cierre de t+1 (siguiente fecha en `dates`).  El valor
+    se asigna al índice t, de modo que `df.loc[t]` es el retorno realizado
+    ENTRE t y t+1 — nunca se mira un precio anterior a t para construirlo.
+
+    El shift(-1) al final es estándar en backtesting: asegura que el modelo
+    decide en t (con información <= t) y cobra el retorno t→t+1 sin ningún
+    leakage (Jansen 2020, cap. 8).
 
     Args:
-        preds: DataFrame con columna 'date' a frecuencia semanal.
+        prices: DataFrame de precios (index=fecha, cols=tickers).
+        dates : secuencia ordenada de fechas de decisión (W-FRI en este proyecto).
 
     Returns:
-        DataFrame filtrado con una fila por (mes × etf), correspondiente al
-        último viernes disponible de cada mes.
+        DataFrame con el mismo índice que `dates`, valores = retornos de t→t+1.
+        La última fila contiene NaN (no hay t+1 disponible para la última fecha).
     """
-    preds = preds.copy()
-    preds["_month"] = preds["date"].dt.to_period("M")
-    preds = preds.loc[
-        preds.groupby("_month")["date"].transform("max") == preds["date"]
-    ].drop(columns=["_month"])
-    return preds
+    return prices.reindex(dates).ffill().pct_change().shift(-1)
 
 
 # ============================================================================

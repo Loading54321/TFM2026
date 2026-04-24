@@ -122,9 +122,26 @@ def _validate_temporal_alignment(
 
 # ── Features ETF-específicas ───────────────────────────────────────────────────
 
+def _rsi(series: pd.Series, period: int) -> pd.Series:
+    """
+    RSI de Wilder usando suavizado exponencial (EWM con alpha = 1/period).
+
+    Devuelve valores en [0, 100]:
+      < 30  → territorio de sobreventa  (posible recuperación)
+      > 70  → territorio de sobrecompra (posible corrección)
+
+    Causal: solo usa historia hasta el punto t (sin lookahead).
+    """
+    delta = series.diff()
+    gain  = delta.clip(lower=0).ewm(alpha=1 / period, adjust=False).mean()
+    loss  = (-delta.clip(upper=0)).ewm(alpha=1 / period, adjust=False).mean()
+    rs    = gain / loss.replace(0, np.nan)
+    return 100 - 100 / (1 + rs)
+
+
 def compute_etf_features(prices: pd.DataFrame, sector_etfs: list) -> pd.DataFrame:
     """
-    Genera features de momentum y volatilidad por ETF a frecuencia semanal:
+    Genera features de momentum, volatilidad y RSI por ETF a frecuencia semanal:
       ret_1w        retorno 1 semana
       ret_4w        retorno acumulado 4 semanas (≈ 1 mes)
       ret_13w       retorno acumulado 13 semanas (≈ 1 trimestre)
@@ -132,6 +149,9 @@ def compute_etf_features(prices: pd.DataFrame, sector_etfs: list) -> pd.DataFram
       ret_52w       retorno acumulado 52 semanas (≈ 1 año)
       momentum_52_4 ret_52w − ret_4w  (momentum anual excluyendo el último mes)
       vol_26w       volatilidad rolling anualizada, ventana 26 semanas
+      rsi_9w        RSI Wilder 9 semanas (≈ 2 meses, táctico)
+      rsi_14w       RSI Wilder 14 semanas (≈ 3.5 meses, estándar)
+      rsi_26w       RSI Wilder 26 semanas (≈ 6 meses, medio plazo)
 
     Todas las features son causales: usan datos disponibles al cierre de la semana t.
     """
@@ -140,6 +160,7 @@ def compute_etf_features(prices: pd.DataFrame, sector_etfs: list) -> pd.DataFram
 
     for etf in sector_etfs:
         r = returns[etf].dropna()
+        p = prices[etf].reindex(r.index)
         d = pd.DataFrame(index=r.index)
         d["etf"]           = etf
         d["return"]        = r
@@ -150,6 +171,9 @@ def compute_etf_features(prices: pd.DataFrame, sector_etfs: list) -> pd.DataFram
         d["ret_52w"]       = r.rolling(52).sum()
         d["momentum_52_4"] = r.rolling(52).sum() - r.rolling(4).sum()
         d["vol_26w"]       = r.rolling(26).std() * np.sqrt(52)
+        d["rsi_9w"]        = _rsi(p, 9)
+        d["rsi_14w"]       = _rsi(p, 14)
+        d["rsi_26w"]       = _rsi(p, 26)
         records.append(d)
 
     panel = pd.concat(records)
@@ -158,7 +182,7 @@ def compute_etf_features(prices: pd.DataFrame, sector_etfs: list) -> pd.DataFram
 
     # ffill de gaps puntuales por ETF (festivos o datos ausentes esporádicos)
     feat_cols = ["ret_1w", "ret_4w", "ret_13w", "ret_26w", "ret_52w",
-                 "momentum_52_4", "vol_26w"]
+                 "momentum_52_4", "vol_26w", "rsi_9w", "rsi_14w", "rsi_26w"]
     panel.sort_values(["etf", "date"], inplace=True)
     panel[feat_cols] = panel.groupby("etf")[feat_cols].ffill()
 
@@ -173,8 +197,13 @@ def add_cross_sectional_features(panel: pd.DataFrame) -> pd.DataFrame:
 
     ret_Xw_rank = 0  →  peor retorno del grupo esa semana
     ret_Xw_rank = 1  →  mejor retorno del grupo
+
+    rsi_Xw_rank: rank del RSI dentro del grupo esa semana.
+      rank alto (≈1) → ETF con mayor RSI relativo (más sobrecomprado en el grupo)
+      rank bajo (≈0) → ETF con menor RSI relativo (más sobrevendido en el grupo)
     """
-    for col in ["ret_1w", "ret_4w", "ret_13w", "ret_26w", "ret_52w", "vol_26w"]:
+    for col in ["ret_1w", "ret_4w", "ret_13w", "ret_26w", "ret_52w", "vol_26w",
+                "rsi_9w", "rsi_14w", "rsi_26w"]:
         if col in panel.columns:
             panel[f"{col}_rank"] = (
                 panel.groupby("date")[col]
@@ -322,9 +351,10 @@ def build_feature_matrix(sector_etfs: list = None) -> pd.DataFrame:
     print(f"[FE] Target: exceso de retorno ETF vs SPY en t+1 (semanal)")
 
     _etf_base  = {"ret_1w","ret_4w","ret_13w","ret_26w","ret_52w",
-                  "momentum_52_4","vol_26w"}
+                  "momentum_52_4","vol_26w","rsi_9w","rsi_14w","rsi_26w"}
     _etf_rank  = {f"{c}_rank" for c in ["ret_1w","ret_4w","ret_13w","ret_26w",
-                                         "ret_52w","vol_26w"]}
+                                         "ret_52w","vol_26w",
+                                         "rsi_9w","rsi_14w","rsi_26w"]}
     _etf_exc   = {"excess_ret_1w","excess_ret_13w","excess_ret_52w"}
     _spy_cols  = {"spy_ret_1w","spy_ret_4w","spy_ret_52w"}
     _ff5_cols  = {"Mkt-RF","SMB","HML","RMW","CMA","RF"}

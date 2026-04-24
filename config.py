@@ -131,6 +131,20 @@ HMM_CONTEXT_PERIODS = 235       # Ventana de contexto del filtro forward HMM en 
 # estándar en gestión cuantitativa con señales ruidosas (Thorp 2006).
 KELLY_FRACTION = 0.5            # fracción half-Kelly para ponderación multi-activo
 
+# Ventana causal (en SEMANAS) para estimar var_i en la ponderación Half-Kelly.
+# 36 semanas ≈ 9 meses: suficiente historia para estimar varianza de forma
+# estable pero reactiva ante cambios recientes de régimen de volatilidad.
+# Usada en 05_strategy_backtest.py, compare_strategies.py y analyze_shorts.py.
+KELLY_LOOKBACK_WEEKS = 36
+
+# ── Costos de transacción ─────────────────────────────────────────────────────
+# Basis points cobrados por cada leg (apertura o cierre de una posición).
+# Aplicado en 05_strategy_backtest.py, compare_strategies.py y benchmarks
+# long-only / long-short. Fórmula actual:
+#   cost_t = n_legs_turned * (COST_BPS / 10_000) / n_positions_held
+# siendo n_legs_turned = |simétrica(new, prev)| en cada pata.
+COST_BPS = 10
+
 DEFAULT_MODEL = "RandomForest"
 
 

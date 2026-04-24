@@ -1,12 +1,15 @@
 """
 compare_strategies.py
 =====================
-Tabla comparativa anual OOS (2020-2024):
+Tabla comparativa anual OOS (semanal):
   1. LightGBM / RandomForest — Half-Kelly Diagonal Long-Short
-  2. RegimeRF  — 3 RF especializados por régimen HMM (Half-Kelly Diagonal Long-Short)
-  3. X Top3    — igual modelo, solo pata larga (Top-3 Kelly matricial Long-Only)
+  2. RegimeLGBM — 3 LGBM especializados por régimen HMM (Half-Kelly Diagonal Long-Short)
+  3. X Top3    — igual modelo, solo pata larga (Half-Kelly Diagonal Long-Only)
   4. SPY       — benchmark pasivo buy & hold
   5. Top-3 EW  — Top-3 por predicted_return, pesos iguales, solo largo
+
+Todas las series tienen frecuencia semanal (W-FRI).  Los costes de transacción
+se aplican con COST_BPS por leg, definido en config.py.
 """
 
 import os
@@ -19,16 +22,16 @@ import matplotlib.ticker as mtick
 import warnings
 warnings.filterwarnings("ignore")
 
-from config import DATA_DIR, TOP_N, BOTTOM_N, OOS_START, OOS_END, KELLY_FRACTION
+from config import DATA_DIR, TOP_N, BOTTOM_N, OOS_START, OOS_END, COST_BPS
+from utils import weekly_forward_returns
 from importlib import import_module
 
 # Importar desde 05_strategy_backtest (nombre con numero, requiere import_module)
 _bt = import_module("05_strategy_backtest")
-build_portfolio          = _bt.build_portfolio
-kelly_weights_multiasset = _bt.kelly_weights_multiasset
-cagr                     = _bt.cagr
-sharpe                   = _bt.sharpe
-max_drawdown             = _bt.max_drawdown
+build_portfolio = _bt.build_portfolio
+cagr            = _bt.cagr
+sharpe          = _bt.sharpe
+max_drawdown    = _bt.max_drawdown
 
 
 # ── helpers de metricas ───────────────────────────────────────────────────────
@@ -44,39 +47,59 @@ def build_ew_portfolio(
     pred_path: str,
     prices_path: str,
     leg: str = "long",
+    transaction_costs: bool = True,
 ) -> pd.Series:
     """
-    Retornos semanales de un portafolio EW puro, sin Kelly ni costos.
+    Retornos semanales de un portafolio Equal-Weight puro.
       leg='long' : Top-N ETFs, weight = 1/N cada uno (retorno positivo)
       leg='short': Bottom-N ETFs, weight = 1/N cada uno (retorno negativo = corto)
 
-    Anti-leakage: retornos t+1 via shift(-1), igual que en build_portfolio.
-    El caller reindexea el resultado al índice mensual del portafolio Kelly.
+    Costes de transacción: COST_BPS por nombre entrado/salido, normalizado por
+    n_positions_held, igual que en build_portfolio (consistencia entre
+    estrategias para que la comparación sea justa).
+
+    Anti-leakage: retornos t+1 vía weekly_forward_returns (shift(-1)).
     """
     preds  = pd.read_csv(pred_path, parse_dates=["date"])
     prices = pd.read_csv(prices_path, index_col=0, parse_dates=True)
-    actual = prices.pct_change().shift(-1)
 
-    rows = []
+    pred_dates = sorted(preds["date"].unique())
+    actual     = weekly_forward_returns(prices, pred_dates)
+
+    rows        = []
+    prev_held   = set()
+    sign        = 1.0 if leg == "long" else -1.0
+    n_select    = TOP_N if leg == "long" else BOTTOM_N
+
     for date, g in preds.groupby("date"):
-        if leg == "long":
-            etfs = g.nsmallest(TOP_N, "rank")["etf"].tolist()
-            sign = +1.0
-        else:
-            etfs = g.nlargest(BOTTOM_N, "rank")["etf"].tolist()
-            sign = -1.0
+        etfs = (
+            g.nsmallest(n_select, "rank")["etf"].tolist() if leg == "long"
+            else g.nlargest(n_select, "rank")["etf"].tolist()
+        )
 
-        month_rets = []
+        rets = []
+        held = set()
         for e in etfs:
             try:
                 r = actual.loc[date, e]
                 if pd.notna(r):
-                    month_rets.append(float(r))
+                    rets.append(float(r))
+                    held.add(e)
             except KeyError:
                 pass
 
-        if month_rets:
-            rows.append({"date": date, "ret": sign * float(np.mean(month_rets))})
+        if not rets:
+            continue
+
+        port_ret = sign * float(np.mean(rets))
+
+        if transaction_costs and held:
+            turnover = len(held.symmetric_difference(prev_held))
+            n_held   = len(held) or 1
+            port_ret -= turnover * (COST_BPS / 10_000) / n_held
+            prev_held = held
+
+        rows.append({"date": date, "ret": port_ret})
 
     return (
         pd.DataFrame(rows)
@@ -85,89 +108,30 @@ def build_ew_portfolio(
     )
 
 
-# ── portafolio Kelly long-only (solo Top-3) ──────────────────────────────────
+# ── portafolio Half-Kelly long-only (solo Top-N) ─────────────────────────────
 
 def build_kelly_longonly(
     pred_path: str,
     prices_path: str,
     transaction_costs: bool = True,
-    kelly_lookback: int = 36,
 ) -> pd.Series:
     """
-    Portafolio Kelly con solo la pata larga (Top-N ETFs).
+    Portafolio Half-Kelly con solo la pata larga (Top-N ETFs).
 
-    Usa la misma función kelly_weights_multiasset pero con short_etfs=[],
-    de modo que todos los pesos van al Top-N y no hay posiciones cortas.
+    Wrapper sobre build_portfolio(long_only=True): usa exactamente la misma
+    lógica de ponderación, retorno t+1 y costes que la estrategia completa
+    Long-Short, pero sin pata corta.
 
     Permite aislar la contribucion de la pata larga vs la long-short completa:
       - Si "X Kelly" >> "X Top3" → el short añade valor
       - Si "X Top3" ≈ "X Kelly" → el short resta o es neutral
     """
-    preds  = pd.read_csv(pred_path, parse_dates=["date"])
-    prices = pd.read_csv(prices_path, index_col=0, parse_dates=True)
-    prices.sort_index(inplace=True)
-
-    # Filtrar periodo OOS y tomar el ultimo viernes de cada mes (igual que build_portfolio)
-    preds = preds[
-        (preds["date"] >= OOS_START) & (preds["date"] <= OOS_END)
-    ].copy()
-    preds["date"] = pd.to_datetime(preds["date"])
-    preds["ym"]   = preds["date"].dt.to_period("M")
-    preds = (
-        preds.sort_values("date")
-        .groupby(["ym", "etf"], as_index=False)
-        .last()
-        .drop(columns="ym")
+    df = build_portfolio(
+        pred_path, prices_path,
+        transaction_costs=transaction_costs,
+        long_only=True,
     )
-
-    monthly_dates  = sorted(preds["date"].unique())
-    prices_monthly = prices.reindex(monthly_dates).ffill()
-    actual_returns = prices_monthly.pct_change().shift(-1)
-
-    results   = []
-    prev_long = set()
-
-    for date, group in preds.groupby("date"):
-        pred_by_etf = group.set_index("etf")["predicted_return"]
-        top_etfs    = group.nsmallest(TOP_N, "rank")["etf"].tolist()
-
-        long_rets = {}
-        for e in top_etfs:
-            try:
-                r = actual_returns.loc[date, e]
-                if pd.notna(r):
-                    long_rets[e] = float(r)
-            except KeyError:
-                pass
-
-        if not long_rets:
-            continue
-
-        long_etfs = list(long_rets.keys())
-
-        # Kelly solo sobre la pata larga (short_etfs=[])
-        long_w, _ = kelly_weights_multiasset(
-            long_etfs, [], pred_by_etf, prices_monthly, date,
-            lookback=kelly_lookback, kelly_fraction=KELLY_FRACTION,
-        )
-        lw = long_w.to_dict()
-
-        port_ret = float(sum(lw[e] * long_rets[e] for e in long_etfs))
-
-        if transaction_costs:
-            new_long  = {e for e in long_etfs if lw[e] > 0}
-            turnover  = len(new_long.symmetric_difference(prev_long))
-            n_held    = len(new_long) or 1
-            port_ret -= turnover * (10 / 10_000) / n_held
-            prev_long = new_long
-
-        results.append({"date": date, "ret": port_ret})
-
-    return (
-        pd.DataFrame(results)
-        .set_index("date")
-        .sort_index()["ret"]
-    )
+    return df["portfolio_return"]
 
 
 # ── tabla principal ───────────────────────────────────────────────────────────
@@ -175,10 +139,9 @@ def build_kelly_longonly(
 def run_comparison():
     prices_path = f"{DATA_DIR}/etf_prices.csv"
     prices      = pd.read_csv(prices_path, index_col=0, parse_dates=True)
-    spy_all     = prices["SPY"].pct_change().dropna()
 
     strategies = {}
-    longonly   = {}   # pata larga Kelly Top-3 de cada modelo
+    longonly   = {}   # pata larga Half-Kelly Top-N de cada modelo
     shortleg   = {}   # pata corta standalone: -short_return (positivo = ganancia en corto)
 
     for model in ["LightGBM", "RandomForest"]:
@@ -190,20 +153,20 @@ def run_comparison():
             # Pata corta standalone: negamos short_return porque en build_portfolio
             # se resta (port = long - short), pero como inversión aislada la ganancia
             # es justamente esa negación: si el ETF baja, short_return < 0 → -short > 0.
-            # Meses sin posición corta (filtro simétrico) quedan en 0 (efectivo).
+            # Semanas sin posición corta (filtro simétrico) quedan en 0 (efectivo).
             shortleg[f"{model} Short3"]   = -port_df["short_return"]
         else:
             print(f"[!] No encontrado: {pred_path} — omitido")
 
-    # RegimeRF: 3 RF especializados por régimen HMM
-    regime_pred_path = f"{DATA_DIR}/predictions_RegimeRF.csv"
+    # RegimeLGBM: 3 LGBM especializados por régimen HMM
+    regime_pred_path = f"{DATA_DIR}/predictions_RegimeLGBM.csv"
     if os.path.exists(regime_pred_path):
         port_regime = build_portfolio(
             regime_pred_path, prices_path, transaction_costs=True
         )
-        strategies["RegimeRF Kelly"] = port_regime["portfolio_return"]
-        longonly["RegimeRF Top3"]    = build_kelly_longonly(regime_pred_path, prices_path)
-        shortleg["RegimeRF Short3"]  = -port_regime["short_return"]
+        strategies["RegimeLGBM Kelly"] = port_regime["portfolio_return"]
+        longonly["RegimeLGBM Top3"]    = build_kelly_longonly(regime_pred_path, prices_path)
+        shortleg["RegimeLGBM Short3"]  = -port_regime["short_return"]
     else:
         print(f"[!] No encontrado: {regime_pred_path} — ejecuta 04b_regime_walk_forward.py")
 
@@ -214,10 +177,13 @@ def run_comparison():
         return pd.DataFrame()
     oos_idx = strategies[first_key].index
 
-    # SPY benchmark
-    strategies["SPY"] = spy_all.reindex(oos_idx).dropna()
+    # SPY benchmark: retornos semanales t→t+1 alineados con el portafolio.
+    # Usamos weekly_forward_returns para aplicar exactamente la misma convención
+    # que build_portfolio (retorno entre t y t+1, NaN al final).
+    spy_fwd = weekly_forward_returns(prices[["SPY"]], oos_idx)["SPY"]
+    strategies["SPY"] = spy_fwd.dropna()
 
-    # EW Top-3 (benchmark simple sin Kelly ni costos)
+    # EW Top-N (benchmark simple con los mismos costes que Kelly)
     pred_rf = f"{DATA_DIR}/predictions_RandomForest.csv"
     if os.path.exists(pred_rf):
         ew_long = build_ew_portfolio(pred_rf, prices_path, leg="long")
@@ -231,7 +197,7 @@ def run_comparison():
     for k, v in longonly.items():
         all_strategies[k] = v.reindex(oos_idx).dropna()
     for k, v in shortleg.items():
-        # fillna(0): meses sin posición corta (filtro simétrico) = efectivo, retorno 0
+        # fillna(0): semanas sin posición corta (filtro simétrico) = efectivo, retorno 0
         all_strategies[k] = v.reindex(oos_idx).fillna(0)
     all_strategies["SPY"]          = strategies["SPY"]
     if "Top-3 EW (RF)" in strategies:
@@ -269,12 +235,14 @@ def run_comparison():
     print(sep)
     print()
     print("Notas:")
-    print("  X Kelly      = Half-Kelly Diagonal: Top3 largo + Bottom3 corto (filtro: pred<0 AND |pred|>pred_Top1)")
-    print("  X Top3       = Solo pata larga: Top3 con pesos Kelly matricial, sin posiciones cortas")
+    print(f"  X Kelly      = Half-Kelly Diagonal: Top{TOP_N} largo + Bottom{BOTTOM_N} corto "
+          f"(filtro: pred<0 AND |pred|>pred_Top{TOP_N})")
+    print(f"  X Top3       = Solo pata larga: Top{TOP_N} con pesos Half-Kelly Diagonal, sin posiciones cortas")
     print("  X Short3     = Solo pata corta standalone: -short_return del modelo completo")
-    print("                 (positivo = ganancia en corto; 0 = mes sin posición por filtro simétrico)")
-    print("  Top-3 EW(RF) = Top-3 RandomForest, peso 1/3 c/u, largo, sin costos tx (benchmark EW)")
+    print("                 (positivo = ganancia en corto; 0 = semana sin posición por filtro simétrico)")
+    print(f"  Top-3 EW(RF) = Top-{TOP_N} RandomForest, peso 1/{TOP_N} c/u, largo, con costos {COST_BPS} bps (benchmark EW)")
     print("  SPY          = Buy & hold S&P500 (benchmark pasivo)")
+    print(f"  Frecuencia: semanal (W-FRI) | Costes tx: {COST_BPS} bps por leg | CAGR/Sharpe anualizados × 52")
 
     # ── grafico de retorno acumulado ──────────────────────────────────────────
     # Portafolio completo Long-Short (Kelly + filtro) + Top-3 long-only + SPY.
@@ -302,13 +270,13 @@ def plot_cumulative(strategies: dict, oos_idx):
     # Estilos: Kelly sólida gruesa · Top3 punteada (mismo color) · SPY verde
     styles = {
         # ── Portafolio completo Long-Short (sólidas, lw mayor) ───────────────
-        "LightGBM Kelly"     : dict(lw=2.2, ls="-",  color="#1f77b4"),
-        "RandomForest Kelly" : dict(lw=2.2, ls="-",  color="#ff7f0e"),
-        "RegimeRF Kelly"     : dict(lw=2.2, ls="-",  color="#9467bd"),
+        "LightGBM Kelly"      : dict(lw=2.2, ls="-",  color="#1f77b4"),
+        "RandomForest Kelly"  : dict(lw=2.2, ls="-",  color="#ff7f0e"),
+        "RegimeLGBM Kelly"    : dict(lw=2.2, ls="-",  color="#9467bd"),
         # ── Pata larga Top-3 long-only (punteadas, mismo color) ──────────────
-        "LightGBM Top3"      : dict(lw=1.5, ls="--", color="#1f77b4"),
-        "RandomForest Top3"  : dict(lw=1.5, ls="--", color="#ff7f0e"),
-        "RegimeRF Top3"      : dict(lw=1.5, ls="--", color="#9467bd"),
+        "LightGBM Top3"       : dict(lw=1.5, ls="--", color="#1f77b4"),
+        "RandomForest Top3"   : dict(lw=1.5, ls="--", color="#ff7f0e"),
+        "RegimeLGBM Top3"     : dict(lw=1.5, ls="--", color="#9467bd"),
         # ── Benchmark ────────────────────────────────────────────────────────
         "SPY"                    : dict(lw=2.5, ls="-",  color="#2ca02c"),
     }
@@ -316,8 +284,9 @@ def plot_cumulative(strategies: dict, oos_idx):
     fig, axes = plt.subplots(2, 1, figsize=(14, 10),
                              gridspec_kw={"height_ratios": [3, 1.5]})
     fig.suptitle(
-        f"Portafolio Long-Short Kelly (—) vs Top-3 Long-Only (--) vs SPY  |  Por Modelo\n"
-        f"OOS {OOS_START[:4]}–{OOS_END[:4]}  |  Half-Kelly Diagonal · Filtro: pred<0 AND |pred|>pred_Top1 · Costos 10 bps",
+        f"Portafolio Long-Short Kelly (—) vs Top-{TOP_N} Long-Only (--) vs SPY  |  Por Modelo\n"
+        f"OOS {OOS_START[:4]}–{OOS_END[:4]}  (semanal)  |  Half-Kelly Diagonal · "
+        f"Filtro: pred<0 AND |pred|>pred_Top{TOP_N} · Costos {COST_BPS} bps",
         fontsize=12, fontweight="bold",
     )
 

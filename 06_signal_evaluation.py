@@ -30,7 +30,7 @@ Metricas implementadas (sin alphalens, puro pandas/scipy):
      Complementa el IC: un modelo puede tener IC bajo pero hit rate alto.
 
 Modelos evaluados:
-  LightGBM, RandomForest, RegimeRF (3 RF por regimen HMM)
+  LightGBM, RandomForest, RegimeLGBM (3 LGBM por regimen HMM)
 
 Genera:
   data/signal_evaluation_IC_{model}.csv        IC semanal por modelo
@@ -117,7 +117,7 @@ def ic_by_regime(preds: pd.DataFrame) -> pd.DataFrame:
     IC medio por regimen de mercado.
 
     Detecta automaticamente la columna de regimen:
-      'regime'        -> columna de RegimeRF (04b_regime_walk_forward.py)
+      'regime'        -> columna de RegimeLGBM (04b_regime_walk_forward.py)
       'market_regime' -> columna de RF/GB global (04_walk_forward_training.py)
     Si ninguna existe, devuelve DataFrame vacio.
     """
@@ -306,7 +306,7 @@ def evaluate_model(model_name: str, period: str = "OOS") -> tuple:
     """Carga predicciones de un modelo y calcula IC, quintiles y hit rate."""
     pred_path = f"{DATA_DIR}/predictions_{model_name}.csv"
     if not os.path.exists(pred_path):
-        script = "04b_regime_walk_forward.py" if model_name == "RegimeRF" \
+        script = "04b_regime_walk_forward.py" if model_name == "RegimeLGBM" \
                  else "04_walk_forward_training.py"
         print(f"[!] No encontrado: {pred_path}. Ejecuta primero {script}")
         return None, None, None
@@ -343,8 +343,8 @@ if __name__ == "__main__":
     print("  EVALUACION DE SENALES — IC Analysis (Jansen 2020, cap. 12)")
     print("=" * 65 + "\n")
 
-    # Modelos a evaluar: RF global, GB global y RF por regimen HMM
-    model_names = ["LightGBM", "RandomForest", "RegimeRF"]
+    # Modelos a evaluar: RF global, LGBM global y LGBM por regimen HMM
+    model_names = ["LightGBM", "RandomForest", "RegimeLGBM"]
 
     ic_dict       = {}
     quintile_dict = {}

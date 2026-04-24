@@ -1,9 +1,9 @@
 """
 04b_regime_walk_forward.py
 ===========================
-Walk-Forward con 3 modelos RandomForest especializados por régimen HMM.
+Walk-Forward con 3 modelos LightGBM especializados por régimen HMM.
 
-Cada RF aprende únicamente de los períodos históricos que coinciden con su
+Cada LGBM aprende únicamente de los períodos históricos que coinciden con su
 régimen objetivo (Bear / Ranging / Bull), capturando relaciones distintas
 entre features y retornos futuros en cada fase del ciclo económico.
 
@@ -14,11 +14,11 @@ Arquitectura por paso walk-forward (semana OOS t)
   3. Para cada régimen k ∈ {0=Bear, 1=Ranging, 2=Bull}:
        • Filtrar observaciones del panel de train donde argmax P == k
          (o donde P(k) >= REGIME_THRESHOLD si el parámetro es > 0)
-       • Si |obs_k| >= MIN_REGIME_OBS → entrenar RF_k en esos datos
-       • Si no → RF_k = None (se usará el fallback global)
-  4. Entrenar RF_global sobre TODOS los datos de train (fallback)
+       • Si |obs_k| >= MIN_REGIME_OBS → entrenar LGBM_k en esos datos
+       • Si no → LGBM_k = None (se usará el fallback global)
+  4. Entrenar LGBM_global sobre TODOS los datos de train (fallback)
   5. Avanzar forward filter un paso hasta t → régimen_t actual
-  6. Predicción en t con RF_{régimen_t} si disponible, o RF_global
+  6. Predicción en t con LGBM_{régimen_t} si disponible, o LGBM_global
 
 Anti-leakage verificado
 ━━━━━━━━━━━━━━━━━━━━━━━
@@ -211,7 +211,7 @@ def walk_forward_regime_models(
     """
     spy_df    = load_spy_features(data_dir)
     feat_cols = get_feature_cols(panel)
-    rf_tmpl   = MODELS["RandomForest"]
+    rf_tmpl   = MODELS["LightGBM"]
     n_etfs    = panel["etf"].nunique()
 
     oos_dates = sorted(panel.loc[
@@ -219,7 +219,7 @@ def walk_forward_regime_models(
     ].unique())
 
     print(f"\n{'='*65}")
-    print(f"  Walk-Forward — 3 RF Especializados por Régimen HMM")
+    print(f"  Walk-Forward — 3 LGBM Especializados por Régimen HMM")
     print(f"{'='*65}")
     print(f"  Features         : {len(feat_cols)} columnas")
     print(f"  ETFs             : {n_etfs}")
@@ -362,7 +362,7 @@ def walk_forward_regime_models(
         return pd.DataFrame()
 
     predictions = pd.concat(all_preds, ignore_index=True)
-    out_path    = f"{data_dir}/predictions_RegimeRF.csv"
+    out_path    = f"{data_dir}/predictions_RegimeLGBM.csv"
     predictions.to_csv(out_path, index=False)
     print(f"\n[WF-Régimen] Predicciones guardadas: {out_path}  "
           f"({len(predictions)} filas OOS)")
@@ -415,8 +415,8 @@ def regime_feature_importance(
             print(f"  → Datos insuficientes ({n_obs} < {min_regime_obs}), omitido")
             continue
 
-        imp = _fi(regime_panel, "RandomForest", TRAIN_START, TRAIN_END, feat_cols)
-        out = f"{data_dir}/feature_importance_RF_{name}.csv"
+        imp = _fi(regime_panel, "LightGBM", TRAIN_START, TRAIN_END, feat_cols)
+        out = f"{data_dir}/feature_importance_LGBM_{name}.csv"
         imp.to_csv(out)
         print(f"  → Guardado: {out}")
         results[name] = imp

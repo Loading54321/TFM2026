@@ -93,7 +93,7 @@ def eda_etf_by_regime(
     Devuelve
     --------
     DataFrame pivotado: filas = ETF, columnas = régimen (Bear/Ranging/Bull)
-    con retorno medio mensual del exceso vs SPY (en %).
+    con retorno medio semanal del exceso vs SPY (en %).
     """
     print("\n" + "=" * 65)
     print("  EDA — Rendimiento de ETFs por Régimen de Mercado")
@@ -170,7 +170,7 @@ def eda_etf_by_regime(
 
 def _plot_eda(pivot_mean: pd.DataFrame, save_path: str):
     """
-    Gráfico de barras agrupadas: retorno medio mensual por ETF y régimen.
+    Gráfico de barras agrupadas: retorno medio semanal por ETF y régimen.
     Paleta coherente con el gráfico de regímenes del módulo 03.
     """
     if pivot_mean.empty:

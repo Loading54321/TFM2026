@@ -1,24 +1,24 @@
 """
 05_strategy_backtest.py
 =======================
-Construye el portafolio mensual a partir de las predicciones OOS semanales
-y calcula metricas de performance vs SPY.
+Construye el portafolio SEMANAL a partir de las predicciones OOS (W-FRI) y
+calcula métricas de performance vs SPY.
 
-Predicciones: frecuencia semanal (W-FRI). El portafolio sigue siendo mensual:
-  se filtra al último viernes de cada mes para la decisión de asignación.
-  Los retornos se calculan sobre precios mensuales (cierre-mes a cierre-mes).
+Predicciones y rebalanceo: frecuencia semanal (último viernes de cada semana).
+La decisión de asignación se toma cada viernes con información <= t; los
+retornos se devengan entre t y t+1 (semana siguiente) usando precios W-FRI.
 
 Estrategia Long-Short con Half-Kelly diagonal por activo:
-  Long   Top-3 ETFs  (mayor retorno predicho)
-  Short  Bottom-3 ETFs  (menor retorno predicho)  -- con filtro de validación
+  Long   Top-N  ETFs  (mayor retorno predicho)
+  Short  Bottom-N ETFs (menor retorno predicho) — con filtro de validación
 
   Filtro de la pata corta (condicion AND):
-    Un ETF del Bottom-3 solo entra en el corto si cumple ambas condiciones:
+    Un ETF del Bottom-N solo entra en el corto si cumple ambas condiciones:
       (1) pred_bottom < 0          (caída predicha, no solo underperformance)
-      (2) |pred_bottom| > pred_Top1  (magnitud de caída supera la subida del mejor long)
-    Si no cumple ambas, su peso es 0 (ese mes es long-only parcial o total).
-    Motivacion: solo shortear activos con caída predicha fuerte y convicción mayor
-    que la mejor oportunidad larga del portafolio.
+      (2) |pred_bottom| > pred_Top3  (magnitud de caída supera la subida del 3er mejor long)
+    Si no cumple ambas, su peso es 0 (semana long-only parcial o total).
+    Motivacion: filtro relajado respecto a pred_Top1 — permite más cortos cuando
+    el modelo predice caídas moderadas que superan el umbral del 3er long.
 
   Ponderación (N = activos que pasaron los filtros, entre 3 y 6):
     1. Peso base:     w_i = 1/N  (positivo para longs, negativo para shorts)
@@ -26,16 +26,19 @@ Estrategia Long-Short con Half-Kelly diagonal por activo:
     3. Peso ajustado: a_i  = w_i * hk_i
     4. Normalización: w_final_i = a_i / sum(|a_j|)  → suma 100 % del capital
 
-  donde var_i es la varianza historica causal del activo i (ventana 36 meses).
-  Fallback a pesos iguales 1/N si todos los half-Kelly son cero.
+  donde var_i es la varianza histórica causal del activo i (ventana
+  KELLY_LOOKBACK_WEEKS semanas).  Fallback a pesos iguales 1/N si todos los
+  half-Kelly son cero.
 
-Retorno mensual = sum(w_long * ret_long_t+1) - sum(|w_short| * ret_short_t+1)
+Retorno semanal = sum(w_long * ret_long_t+1) − sum(|w_short| * ret_short_t+1)
 
 Anti-leakage:
-  - Predicciones semanales filtradas al último viernes de cada mes
-  - Retornos del mes t+1: prices_monthly.pct_change().shift(-1)
-  - var_i para Half-Kelly: solo precios mensuales <= t (causal, ventana de 36 meses)
-  - Predicciones: ya causales del walk-forward expansivo
+  - Retornos de la semana t+1: prices.reindex(dates).pct_change().shift(-1)
+  - var_i para Half-Kelly: sólo precios semanales <= t (causal,
+    ventana KELLY_LOOKBACK_WEEKS)
+  - Predicciones: ya causales del walk-forward expansivo (date < t)
+  - Costes de transacción cobrados en el periodo t+1 sobre el turnover
+    respecto al portfolio de t (nunca se mira a t+2)
 """
 
 import os
@@ -46,25 +49,32 @@ import matplotlib.ticker as mtick
 import warnings
 warnings.filterwarnings("ignore")
 
-from config import DATA_DIR, TOP_N, BOTTOM_N, OOS_START, OOS_END, KELLY_FRACTION
-from utils import last_friday_of_month
+from config import (
+    DATA_DIR, TOP_N, BOTTOM_N, OOS_START, OOS_END,
+    KELLY_FRACTION, KELLY_LOOKBACK_WEEKS, COST_BPS,
+)
+from utils import weekly_forward_returns
 
-COST_BPS = 10   # costos de transaccion (basis points por operacion, cada leg)
+# Nº de periodos por año (semanas W-FRI) para anualizar métricas.
+WEEKS_PER_YEAR = 52
 
 
 # ── Metricas ──────────────────────────────────────────────────────────────────
 
 def cagr(returns: pd.Series) -> float:
-    n_years = len(returns) / 12
+    n_years = len(returns) / WEEKS_PER_YEAR
     cumret  = (1 + returns).prod()
-    return cumret ** (1 / n_years) - 1
+    return cumret ** (1 / n_years) - 1 if n_years > 0 else np.nan
 
 def annualized_vol(returns: pd.Series) -> float:
-    return returns.std() * np.sqrt(12)
+    return returns.std() * np.sqrt(WEEKS_PER_YEAR)
 
 def sharpe(returns: pd.Series, rf: float = 0.0) -> float:
-    excess = returns - rf / 12
-    return (excess.mean() * 12) / (returns.std() * np.sqrt(12)) if returns.std() > 0 else np.nan
+    excess = returns - rf / WEEKS_PER_YEAR
+    return (
+        (excess.mean() * WEEKS_PER_YEAR) / (returns.std() * np.sqrt(WEEKS_PER_YEAR))
+        if returns.std() > 0 else np.nan
+    )
 
 def max_drawdown(returns: pd.Series) -> float:
     cum  = (1 + returns).cumprod()
@@ -77,14 +87,14 @@ def calmar(returns: pd.Series) -> float:
 
 def performance_summary(returns: pd.Series, label: str = "") -> dict:
     return {
-        "Label"       : label,
-        "CAGR"        : f"{cagr(returns):.2%}",
-        "Vol (ann)"   : f"{annualized_vol(returns):.2%}",
-        "Sharpe"      : f"{sharpe(returns):.2f}",
-        "Max DD"      : f"{max_drawdown(returns):.2%}",
-        "Calmar"      : f"{calmar(returns):.2f}",
-        "Best Month"  : f"{returns.max():.2%}",
-        "Worst Month" : f"{returns.min():.2%}",
+        "Label"      : label,
+        "CAGR"       : f"{cagr(returns):.2%}",
+        "Vol (ann)"  : f"{annualized_vol(returns):.2%}",
+        "Sharpe"     : f"{sharpe(returns):.2f}",
+        "Max DD"     : f"{max_drawdown(returns):.2%}",
+        "Calmar"     : f"{calmar(returns):.2f}",
+        "Best Week"  : f"{returns.max():.2%}",
+        "Worst Week" : f"{returns.min():.2%}",
     }
 
 
@@ -96,7 +106,7 @@ def kelly_weights_multiasset(
     pred_by_etf: pd.Series,
     prices: pd.DataFrame,
     current_date: pd.Timestamp,
-    lookback: int = 36,
+    lookback: int = KELLY_LOOKBACK_WEEKS,
     kelly_fraction: float = KELLY_FRACTION,
     reg: float = 1e-4,
 ) -> tuple:
@@ -118,13 +128,13 @@ def kelly_weights_multiasset(
                  Esto captura que dos activos correlacionados en la misma
                  direccion se penalizan entre si (reducen pesos mutuamente),
                  y que un long y un short correlacionados se benefician.
-      Sigma      covarianza 6x6 de retornos mensuales historicos causales
-                 (precios ya filtrados a frecuencia mensual, ventana de `lookback` meses)
+      Sigma      covarianza n×n de retornos SEMANALES históricos causales
+                 (ventana de `lookback` semanas anteriores a current_date)
 
     Post-procesado:
       - Half-Kelly: f = kelly_fraction * f*  (0.5 por defecto)
       - Pesos negativos -> 0 (Kelly no puede revertir la direccion asignada)
-      - Normalizacion: los 6 pesos positivos suman 1 (100 % del capital)
+      - Normalizacion: los n pesos positivos suman 1 (100 % del capital)
       - Fallback a pesos iguales (1/n) si la suma es <= 0
 
     Por que half-Kelly:
@@ -141,9 +151,10 @@ def kelly_weights_multiasset(
         long_etfs      lista de tickers de la pata larga (Top-N)
         short_etfs     lista de tickers de la pata corta (Bottom-N)
         pred_by_etf    pd.Series (index=ticker) con predicted_return del modelo
-        prices         DataFrame de precios (index=fecha, cols=tickers)
+        prices         DataFrame de precios SEMANALES (index=fecha, cols=tickers)
         current_date   fecha de decision (causal: Sigma solo hasta esta fecha)
-        lookback       meses de historia para estimar Sigma  (default: 36)
+        lookback       semanas de historia para estimar Sigma
+                       (default: KELLY_LOOKBACK_WEEKS en config.py)
         kelly_fraction fraccion del Kelly completo  (default: KELLY_FRACTION=0.5 en config.py)
         reg            regularizacion de la diagonal para evitar singularidad
 
@@ -202,7 +213,7 @@ def simple_kelly_weights(
     pred_by_etf: pd.Series,
     prices: pd.DataFrame,
     current_date: pd.Timestamp,
-    lookback: int = 36,
+    lookback: int = KELLY_LOOKBACK_WEEKS,
     kelly_fraction: float = KELLY_FRACTION,
 ) -> tuple:
     """
@@ -212,7 +223,7 @@ def simple_kelly_weights(
       N   = len(long_etfs) + len(short_etfs)   (activos que pasaron los filtros)
 
       Para cada activo i:
-        var_i   = varianza historica causal de retornos mensuales (ventana lookback)
+        var_i   = varianza histórica causal de retornos SEMANALES (ventana lookback)
         hk_i    = kelly_fraction * |pred_i| / var_i    (escalar Half-Kelly positivo)
         base_i  = 1/N  (positivo para longs, negativo para shorts)
         adj_i   = base_i * hk_i
@@ -271,65 +282,67 @@ def build_portfolio(
     prices_path: str = f"{DATA_DIR}/etf_prices.csv",
     transaction_costs: bool = True,
     kelly_fraction: float = KELLY_FRACTION,
-    kelly_lookback: int = 36,
+    kelly_lookback: int = KELLY_LOOKBACK_WEEKS,
+    long_only: bool = False,
 ) -> pd.DataFrame:
     """
-    Construye retornos mensuales del portafolio Long-Short con Kelly multi-activo.
+    Construye retornos SEMANALES del portafolio Long-Short con Half-Kelly diagonal.
 
-    Las predicciones son semanales (W-FRI); se filtran al último viernes de cada
-    mes para obtener la señal mensual de asignación. Los precios también se
-    filtran a esas mismas fechas mensuales para calcular retornos mes-a-mes
-    y estimar la covarianza de Kelly correctamente.
+    Las predicciones son semanales (W-FRI) y se utilizan todas ellas — cada
+    viernes se toma una decisión de asignación con información <= t y se cobra
+    el retorno realizado entre t y t+1.
 
-    Para cada mes t (último viernes del mes):
+    Para cada semana t:
 
       LONG  — Top-N ETFs (mayor predicted_return)
-      SHORT — Bottom-N ETFs que cumplen: pred<0 AND |pred|>pred_Top1
+      SHORT — Bottom-N ETFs que cumplen: pred<0 AND |pred|>pred_Top3
+              (desactivado si long_only=True)
 
       Ponderacion con simple_kelly_weights() — Half-Kelly diagonal:
-        N     = activos que pasaron filtros (3 a 6)
+        N     = activos que pasaron filtros (TOP_N a TOP_N+BOTTOM_N)
         hk_i  = KELLY_FRACTION * |pred_i| / var_i   (por activo, causal)
         w_i   = (1/N * hk_i) / sum(|1/N * hk_j|)   → suma 100 % capital
 
       Retorno = sum(w_long * ret_long_t+1) - sum(|w_short| * ret_short_t+1)
-      donde ret_t+1 = retorno mensual entre último viernes de mes t y mes t+1
+      donde ret_t+1 = retorno semanal entre viernes t y viernes t+1
+
+    Costes de transacción (si transaction_costs=True):
+      COST_BPS por nombre que entra o sale del portfolio, normalizado por
+      n_positions_held. Aplicado sobre el retorno del periodo t+1.
 
     Anti-leakage:
-      - Predicciones semanales filtradas al último viernes de cada mes
-      - Retornos del mes t+1: prices_monthly.pct_change().shift(-1)
-      - var_i para Half-Kelly: solo precios_monthly <= t  (causal, 36 meses)
-      - Predicciones: ya causales del walk-forward expansivo
+      - Retornos t+1: prices.reindex(dates).pct_change().shift(-1)
+      - var_i para Half-Kelly: sólo precios semanales <= t (KELLY_LOOKBACK_WEEKS)
+      - Predicciones: ya causales del walk-forward expansivo (date < t)
+      - Turnover: referencia al portfolio anterior (t-1), nunca a t+1
     """
     preds  = pd.read_csv(predictions_path, parse_dates=["date"])
     prices = pd.read_csv(prices_path, index_col=0, parse_dates=True)
 
-    # Filtrar predicciones semanales al último viernes de cada mes
-    preds = last_friday_of_month(preds)
-
-    # Filtrar precios a las mismas fechas mensuales (anti-leakage: retornos mes-a-mes)
-    monthly_dates  = sorted(preds["date"].unique())
-    prices_monthly = prices.reindex(monthly_dates).ffill()
-
-    # Retornos mensuales t+1 (retorno entre mes t y mes t+1)
-    actual_returns = prices_monthly.pct_change().shift(-1)
+    # Universo de fechas de decisión = fechas únicas en predicciones (W-FRI)
+    pred_dates     = sorted(preds["date"].unique())
+    actual_returns = weekly_forward_returns(prices, pred_dates)
     actual_returns.index.name = "date"
 
-    pred_dates = preds["date"].unique()
-    n_aligned  = sum(d in actual_returns.index for d in pred_dates)
-    print(f"  [Validacion] {n_aligned}/{len(pred_dates)} periodos mensuales alineados "
+    n_aligned = actual_returns.notna().any(axis=1).sum()
+    print(f"  [Validacion] {n_aligned}/{len(pred_dates)} semanas con retorno t+1 disponible "
           f"({n_aligned/len(pred_dates):.1%})")
 
     results    = []
     prev_long  = set()
     prev_short = set()
 
+    short_n = 0 if long_only else BOTTOM_N
+
     for date, group in preds.groupby("date"):
 
         pred_by_etf = group.set_index("etf")["predicted_return"]
 
         # ── Seleccion de candidatos (sin filtros) ─────────────────────────────
-        top_etfs    = group.nsmallest(TOP_N,    "rank")["etf"].tolist()
-        bottom_etfs = group.nlargest( BOTTOM_N, "rank")["etf"].tolist()
+        top_etfs    = group.nsmallest(TOP_N,   "rank")["etf"].tolist()
+        bottom_etfs = (
+            group.nlargest(short_n, "rank")["etf"].tolist() if short_n > 0 else []
+        )
 
         # ── Retornos reales t+1 (anti-leakage) ───────────────────────────────
         def _fetch(etf_list: list) -> dict:
@@ -349,30 +362,33 @@ def build_portfolio(
         if not long_rets:
             continue
 
-        long_etfs  = list(long_rets.keys())
+        long_etfs = list(long_rets.keys())
 
         # ── Filtro de la pata corta: condicion AND ────────────────────────────
-        # Un ETF del Bottom-3 solo entra en el corto si cumple AMBAS:
+        # Un ETF del Bottom-N solo entra en el corto si cumple AMBAS:
         #   (1) pred < 0            (caida predicha real, no solo underperformance)
-        #   (2) |pred| > pred_Top1  (magnitud supera la mejor oportunidad larga)
-        # Si no cumple alguna, su peso es 0 (mes long-only parcial o total).
-        pred_top1  = float(pred_by_etf[top_etfs[0]])
-        short_etfs = [
-            e for e in short_rets.keys()
-            if float(pred_by_etf[e]) < 0
-            and abs(float(pred_by_etf[e])) > pred_top1
-        ]
-        short_rets = {e: short_rets[e] for e in short_etfs}
+        #   (2) |pred| > pred_Top3  (magnitud supera el 3er mejor long — filtro relajado)
+        # Si no cumple alguna, su peso es 0 (semana long-only parcial o total).
+        if short_rets:
+            pred_top3  = float(pred_by_etf[top_etfs[-1]])  # rank 3 (3er mejor)
+            short_etfs = [
+                e for e in short_rets.keys()
+                if float(pred_by_etf[e]) < 0
+                and abs(float(pred_by_etf[e])) > pred_top3
+            ]
+            short_rets = {e: short_rets[e] for e in short_etfs}
+        else:
+            short_etfs = []
 
         # ── Half-Kelly diagonal por activo: posiciones filtradas ──────────────
         long_w, short_w = simple_kelly_weights(
-            long_etfs, short_etfs, pred_by_etf, prices_monthly, date,
+            long_etfs, short_etfs, pred_by_etf, prices, date,
             lookback=kelly_lookback, kelly_fraction=kelly_fraction,
         )
 
         # Convertir a dict para indexacion escalar segura en pandas 2.x
         lw = long_w.to_dict()
-        sw = short_w.to_dict()
+        sw = short_w.to_dict() if len(short_w) else {}
 
         long_return  = float(sum(lw[e] * long_rets[e]  for e in long_etfs))
         short_return = float(sum(sw[e] * short_rets[e] for e in short_etfs))
@@ -381,7 +397,7 @@ def build_portfolio(
         # ── Costos de transaccion (turnover sobre posiciones con peso > 0) ────
         if transaction_costs:
             new_long  = {e for e in long_etfs  if lw[e] > 0}
-            new_short = {e for e in short_etfs if sw[e] > 0}
+            new_short = {e for e in short_etfs if sw.get(e, 0) > 0}
             to_long   = len(new_long.symmetric_difference(prev_long))
             to_short  = len(new_short.symmetric_difference(prev_short))
             n_held    = len(new_long) + len(new_short) or 1
@@ -396,9 +412,8 @@ def build_portfolio(
         except KeyError:
             spy_ret = np.nan
 
-        # ETFs con peso efectivo > 0 para el registro
         active_long  = [e for e in long_etfs  if lw[e] > 0]
-        active_short = [e for e in short_etfs if sw[e] > 0]
+        active_short = [e for e in short_etfs if sw.get(e, 0) > 0]
 
         results.append({
             "date"            : date,
@@ -409,23 +424,24 @@ def build_portfolio(
             "long_holdings"   : ",".join(active_long),
             "short_holdings"  : ",".join(active_short),
             "n_short"         : len(active_short),
-            "n_short_filtered": BOTTOM_N - len(short_etfs),
+            "n_short_filtered": max(0, short_n - len(short_etfs)),
         })
 
     df = pd.DataFrame(results).set_index("date")
     df.sort_index(inplace=True)
 
-    months_with_short  = int((df["n_short"] > 0).sum())
-    months_long_only   = int((df["n_short"] == 0).sum())
-    total_filtered     = int(df["n_short_filtered"].sum())
-    months_partial     = int(((df["n_short"] > 0) & (df["n_short_filtered"] > 0)).sum())
-    print(f"  [Portafolio] {len(df)} periodos mensuales | "
-          f"Half-Kelly diagonal top{TOP_N}/bottom{BOTTOM_N}")
-    print(f"  [Filtro corto] ETFs bottom filtrados (pred>=0 o |pred|<=pred_Top1): "
-          f"{total_filtered} en total "
-          f"| meses long-only: {months_long_only} "
-          f"| meses corto parcial: {months_partial} "
-          f"| meses corto completo: {months_with_short - months_partial}")
+    weeks_with_short = int((df["n_short"] > 0).sum())
+    weeks_long_only  = int((df["n_short"] == 0).sum())
+    total_filtered   = int(df["n_short_filtered"].sum())
+    weeks_partial    = int(((df["n_short"] > 0) & (df["n_short_filtered"] > 0)).sum())
+    mode_str = "long-only" if long_only else f"long-short top{TOP_N}/bottom{BOTTOM_N}"
+    print(f"  [Portafolio] {len(df)} semanas | Half-Kelly diagonal {mode_str}")
+    if not long_only:
+        print(f"  [Filtro corto] ETFs bottom filtrados (pred>=0 o |pred|<=pred_Top3): "
+              f"{total_filtered} en total "
+              f"| semanas long-only: {weeks_long_only} "
+              f"| semanas corto parcial: {weeks_partial} "
+              f"| semanas corto completo: {weeks_with_short - weeks_partial}")
     return df
 
 
@@ -450,8 +466,8 @@ def is_portfolio(
 
 def plot_cumulative(results: dict, title: str = "Backtest Results"):
     """
-    results: {label: pd.Series de retornos mensuales}
-    3 paneles: retorno acumulado, drawdown, rolling Sharpe (12m).
+    results: {label: pd.Series de retornos SEMANALES}
+    3 paneles: retorno acumulado, drawdown, rolling Sharpe (52 semanas).
     """
     fig, axes = plt.subplots(3, 1, figsize=(14, 14))
     fig.suptitle(title, fontsize=14, fontweight="bold")
@@ -477,12 +493,13 @@ def plot_cumulative(results: dict, title: str = "Backtest Results"):
 
     ax = axes[2]
     for label, rets in results.items():
-        rs = rets.rolling(12).apply(
-            lambda x: (x.mean() * 12) / (x.std() * np.sqrt(12)) if x.std() > 0 else np.nan
+        rs = rets.rolling(WEEKS_PER_YEAR).apply(
+            lambda x: (x.mean() * WEEKS_PER_YEAR) / (x.std() * np.sqrt(WEEKS_PER_YEAR))
+            if x.std() > 0 else np.nan
         )
         ax.plot(rs.index, rs.values, label=label, lw=1.5)
     ax.axhline(0, color="black", lw=0.8, ls="--")
-    ax.set_title("Rolling Sharpe (12m)")
+    ax.set_title(f"Rolling Sharpe ({WEEKS_PER_YEAR}w)")
     ax.legend()
     ax.grid(True, alpha=0.3)
 
@@ -544,15 +561,12 @@ if __name__ == "__main__":
         if not short_counts.empty:
             print(f"[OOS] ETFs mas frecuentes SHORT:\n{short_counts.to_string()}")
         else:
-            print("[OOS] Kelly asigno peso 0 a todos los cortos en todos los meses")
-
-    prices = pd.read_csv(prices_path, index_col=0, parse_dates=True)
+            print("[OOS] Kelly asigno peso 0 a todos los cortos en todas las semanas")
 
     if oos_df is not None:
-        # SPY retornos mensuales alineados con el portafolio (mismo índice mensual)
-        spy_monthly = prices["SPY"].reindex(oos_df.index).ffill()
-        spy_oos     = spy_monthly.pct_change().dropna()
-        spy_oos     = spy_oos.reindex(oos_df.index).dropna()
+        # SPY retornos t→t+1 ya los calcula build_portfolio (columna 'spy_return')
+        # alineados semana a semana con el portafolio, bajo la misma convención.
+        spy_oos = oos_df["spy_return"].dropna()
         plot_data["SPY (OOS)"] = spy_oos
         metrics_list.append(performance_summary(spy_oos, "SPY (OOS)"))
 
