@@ -1,5 +1,7 @@
 # Sector Rotation Strategy — TFM Código v2
 
+> **Versión final de presentación — Abril 2026**
+
 Estrategia cuantitativa de rotación sectorial con Machine Learning y detección de
 regímenes de mercado (Hidden Markov Model). Pipeline semanal, walk-forward estricto,
 diseñado sin data leakage.
