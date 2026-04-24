@@ -201,7 +201,7 @@ Umbrales de referencia (Grinold & Kahn 2000, *Active Portfolio Management*):
 ### Estrategia de cartera — Long/Short con Half-Kelly diagonal
 
 - **Long**: Top-`TOP_N` ETFs por retorno predicho, ponderación Half-Kelly diagonal por activo
-- **Short**: Bottom-`BOTTOM_N` ETFs con **filtro doble** (pred < 0 AND |pred| > pred_Top3),
+- **Short**: Bottom-`BOTTOM_N` ETFs con **filtro doble** (pred < 0 AND |pred| > pred_Top1),
   peso = 0 si no cumple ambas condiciones (long-only parcial esa semana)
 - **Kelly diagonal**: `hk_i = KELLY_FRACTION × |pred_i| / var_i` (por activo, sin matriz de covarianza)
 - **var_i**: varianza histórica causal de `KELLY_LOOKBACK_WEEKS` semanas (solo datos ≤ t)

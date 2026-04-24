@@ -15,10 +15,8 @@ Estrategia Long-Short con Half-Kelly diagonal por activo:
   Filtro de la pata corta (condicion AND):
     Un ETF del Bottom-N solo entra en el corto si cumple ambas condiciones:
       (1) pred_bottom < 0          (caída predicha, no solo underperformance)
-      (2) |pred_bottom| > pred_Top3  (magnitud de caída supera la subida del 3er mejor long)
+      (2) |pred_bottom| > pred_Top1  (magnitud de caída supera la subida del mejor long)
     Si no cumple ambas, su peso es 0 (semana long-only parcial o total).
-    Motivacion: filtro relajado respecto a pred_Top1 — permite más cortos cuando
-    el modelo predice caídas moderadas que superan el umbral del 3er long.
 
   Ponderación (N = activos que pasaron los filtros, entre 3 y 6):
     1. Peso base:     w_i = 1/N  (positivo para longs, negativo para shorts)
@@ -295,7 +293,7 @@ def build_portfolio(
     Para cada semana t:
 
       LONG  — Top-N ETFs (mayor predicted_return)
-      SHORT — Bottom-N ETFs que cumplen: pred<0 AND |pred|>pred_Top3
+      SHORT — Bottom-N ETFs que cumplen: pred<0 AND |pred|>pred_Top1
               (desactivado si long_only=True)
 
       Ponderacion con simple_kelly_weights() — Half-Kelly diagonal:
@@ -367,14 +365,14 @@ def build_portfolio(
         # ── Filtro de la pata corta: condicion AND ────────────────────────────
         # Un ETF del Bottom-N solo entra en el corto si cumple AMBAS:
         #   (1) pred < 0            (caida predicha real, no solo underperformance)
-        #   (2) |pred| > pred_Top3  (magnitud supera el 3er mejor long — filtro relajado)
+        #   (2) |pred| > pred_Top1  (magnitud supera el mejor long)
         # Si no cumple alguna, su peso es 0 (semana long-only parcial o total).
         if short_rets:
-            pred_top3  = float(pred_by_etf[top_etfs[-1]])  # rank 3 (3er mejor)
+            pred_top1  = float(pred_by_etf[top_etfs[0]])   # rank 1 (mejor long)
             short_etfs = [
                 e for e in short_rets.keys()
                 if float(pred_by_etf[e]) < 0
-                and abs(float(pred_by_etf[e])) > pred_top3
+                and abs(float(pred_by_etf[e])) > pred_top1
             ]
             short_rets = {e: short_rets[e] for e in short_etfs}
         else:
@@ -437,7 +435,7 @@ def build_portfolio(
     mode_str = "long-only" if long_only else f"long-short top{TOP_N}/bottom{BOTTOM_N}"
     print(f"  [Portafolio] {len(df)} semanas | Half-Kelly diagonal {mode_str}")
     if not long_only:
-        print(f"  [Filtro corto] ETFs bottom filtrados (pred>=0 o |pred|<=pred_Top3): "
+        print(f"  [Filtro corto] ETFs bottom filtrados (pred>=0 o |pred|<=pred_Top1): "
               f"{total_filtered} en total "
               f"| semanas long-only: {weeks_long_only} "
               f"| semanas corto parcial: {weeks_partial} "

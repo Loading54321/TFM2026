@@ -236,7 +236,7 @@ def run_comparison():
     print()
     print("Notas:")
     print(f"  X Kelly      = Half-Kelly Diagonal: Top{TOP_N} largo + Bottom{BOTTOM_N} corto "
-          f"(filtro: pred<0 AND |pred|>pred_Top{TOP_N})")
+          f"(filtro: pred<0 AND |pred|>pred_Top1)")
     print(f"  X Top3       = Solo pata larga: Top{TOP_N} con pesos Half-Kelly Diagonal, sin posiciones cortas")
     print("  X Short3     = Solo pata corta standalone: -short_return del modelo completo")
     print("                 (positivo = ganancia en corto; 0 = semana sin posición por filtro simétrico)")
@@ -286,7 +286,7 @@ def plot_cumulative(strategies: dict, oos_idx):
     fig.suptitle(
         f"Portafolio Long-Short Kelly (—) vs Top-{TOP_N} Long-Only (--) vs SPY  |  Por Modelo\n"
         f"OOS {OOS_START[:4]}–{OOS_END[:4]}  (semanal)  |  Half-Kelly Diagonal · "
-        f"Filtro: pred<0 AND |pred|>pred_Top{TOP_N} · Costos {COST_BPS} bps",
+        f"Filtro: pred<0 AND |pred|>pred_Top1 · Costos {COST_BPS} bps",
         fontsize=12, fontweight="bold",
     )
 
