@@ -1,6 +1,7 @@
 """
 06_signal_evaluation.py
 =======================
+# v2 final — Abril 2026
 Evaluacion de la calidad de las senales de prediccion del modelo.
 Frecuencia de predicciones: semanal (W-FRI).
 
@@ -15,7 +16,7 @@ Metricas implementadas (sin alphalens, puro pandas/scipy):
 
   2. IC Rolling (ventana 52 semanas = 1 año)
      Estabilidad temporal de la senial: un IC que decae sistematicamente
-     indica que el modelo pierde poder predictivo en el OOS reciente.
+     indica que el modelo pierde poder predictivo en el OOS reciente
 
   3. IC por regimen de mercado
      Mide si el modelo funciona mejor en Bull, Ranging o Bear.

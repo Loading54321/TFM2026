@@ -1,6 +1,7 @@
 """
 05_strategy_backtest.py
 =======================
+# v2 final — Abril 2026
 Construye el portafolio SEMANAL a partir de las predicciones OOS (W-FRI) y
 calcula métricas de performance vs SPY.
 
@@ -29,6 +30,7 @@ Estrategia Long-Short con Half-Kelly diagonal por activo:
   half-Kelly son cero.
 
 Retorno semanal = sum(w_long * ret_long_t+1) − sum(|w_short| * ret_short_t+1)
+
 
 Anti-leakage:
   - Retornos de la semana t+1: prices.reindex(dates).pct_change().shift(-1)

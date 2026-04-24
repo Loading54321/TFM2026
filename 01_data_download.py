@@ -1,6 +1,7 @@
 """
 01_data_download.py
 ===================
+# v2 final — Abril 2026
 Descarga y guarda los datos crudos a frecuencia semanal (último viernes, ffill universal):
   - ETFs sectoriales (yfinance, diario → resample W-FRI + ffill)
   - Variables macroeconómicas (FRED API, diario o mensual → resample W-FRI + ffill)
@@ -29,7 +30,7 @@ from config import (
 os.makedirs(DATA_DIR, exist_ok=True)
 
 
-# 1. ETFs
+# 1. ETFs.
 def download_etfs() -> pd.DataFrame:
     """
     Descarga precios ajustados de cierre diarios y resamplea al último viernes de

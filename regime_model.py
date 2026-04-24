@@ -1,6 +1,7 @@
 """
 regime_model.py
 ===============
+# v2 final — Abril 2026
 Funciones compartidas para la deteccion de regimenes con Gaussian HMM.
 
 Frecuencia: semanal (W-FRI). Las observaciones son ret_13w y vol_13w,
@@ -21,6 +22,7 @@ VALIDACION CONTRA LITERATURA
        covariance_type='full'. Esta implementacion CUMPLE y MEJORA:
        usa (ret_13w, vol_13w) en lugar de solo retornos, separando mejor
        los estados de alta y baja volatilidad.
+
 
 [2] Tutorial practico:
     "Market Regime Detection using Hidden Markov Models in Python"

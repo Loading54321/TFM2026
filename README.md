@@ -280,7 +280,7 @@ python run_all.py
 # Orden: 02 → 03 → 04 → 04b → 05 → 06 → compare_strategies
 ```
 
-### 5. Re-ejecutar solo modelos (datos ya descargados)
+### 5. Re-ejecutar solo modelos (datos ya descargados).
 
 ```bash
 python run_models_only.py

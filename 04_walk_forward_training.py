@@ -1,6 +1,7 @@
 """
 04_walk_forward_training.py
 ===========================
+# v2 final — Abril 2026
 Walk-Forward con ventanas independientes para HMM y modelos ML.
 Frecuencia: semanal (W-FRI). ~260 semanas OOS.
 
@@ -22,7 +23,7 @@ Arquitectura de ventanas separadas
                      Usa todos los datos IS disponibles; más datos = mejor
                      generalización cross-seccional.
 
-EDA por régimen de mercado
+EDA por régimen de mercado.
 ───────────────────────────
   Antes del walk-forward se ejecuta un análisis exploratorio que responde
   al requisito del enunciado: observar qué sectores lideran y rezagan en

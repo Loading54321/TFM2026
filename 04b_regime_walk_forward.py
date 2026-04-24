@@ -1,6 +1,7 @@
 """
 04b_regime_walk_forward.py
 ===========================
+# v2 final — Abril 2026
 Walk-Forward con 3 modelos LightGBM especializados por régimen HMM.
 
 Cada LGBM aprende únicamente de los períodos históricos que coinciden con su
@@ -18,7 +19,7 @@ Arquitectura por paso walk-forward (semana OOS t)
        • Si no → LGBM_k = None (se usará el fallback global)
   4. Entrenar LGBM_global sobre TODOS los datos de train (fallback)
   5. Avanzar forward filter un paso hasta t → régimen_t actual
-  6. Predicción en t con LGBM_{régimen_t} si disponible, o LGBM_global
+  6. Predicción en t con LGBM_{régimen_t} si disponible, o LGBM_global.
 
 Anti-leakage verificado
 ━━━━━━━━━━━━━━━━━━━━━━━

@@ -1,6 +1,7 @@
 """
 run_models_only.py
 ==================
+# v2 final — Abril 2026
 Ejecuta el pipeline desde feature engineering (salta solo la descarga de datos,
 que solo es necesaria una vez).
 
@@ -21,6 +22,7 @@ Orden de ejecución:
 
 Para un pipeline completo (con descarga de datos):
   python run_all.py
+  
 """
 
 import os

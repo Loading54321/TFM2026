@@ -1,6 +1,7 @@
 """
 03_market_regime_detection.py
 =============================
+# v2 final — Abril 2026
 Visualizacion de regimenes de mercado y generacion de CSV de respaldo.
 
 Guarda:
@@ -72,7 +73,7 @@ def _plot_regimes(prices: pd.DataFrame, regime: pd.Series, save_path: str):
     ax.set_ylabel("Precio SPY (USD)")
     ax.grid(True, alpha=0.3)
 
-    # Panel inferior: regimen numerico para ver transiciones
+    # Panel inferior: regimen numerico para ver transiciones 
     ax2 = axes[1]
     ax2.step(regime.index, regime.values, where="post", color="#555555", lw=1)
     ax2.fill_between(

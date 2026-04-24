@@ -1,6 +1,7 @@
 """
 run_all.py
 ==========
+# v2 final — Abril 2026
 Pipeline completo de la estrategia de rotacion sectorial.
 
 Orden de ejecucion:
@@ -23,7 +24,7 @@ Notas:
 
 Requiere:
   conda env create -f environment.yml   (crea el entorno tfm-ml-trading)
-  conda activate tfm-ml-trading         (o simplemente: python run_all.py)
+  conda activate tfm-ml-trading         (o simplemente: python run_all.py).
 """
 
 import os

@@ -1,6 +1,7 @@
 """
 models.py
 =========
+# v2 final — Abril 2026
 Define los modelos de machine learning y funciones auxiliares para
 entrenamiento y evaluación.
 
@@ -10,7 +11,7 @@ Modelos disponibles:
 
 Configuración centralizada en config.py (RF_CONFIG, LGBM_CONFIG).
 LGBM_AVAILABLE=False si lightgbm no está instalado — el proyecto sigue
-funcionando solo con RandomForest.
+funcionando solo con RandomForest
 """
 
 import pandas as pd

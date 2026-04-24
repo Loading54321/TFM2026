@@ -1,6 +1,7 @@
 """
 utils.py
 ========
+# v2 final — Abril 2026
 Funciones compartidas entre múltiples módulos.
 
 Evita código duplicado:
@@ -16,9 +17,9 @@ import numpy as np
 from config import DATA_DIR, ML_TRAIN_EXCLUDE_PERIODS
 
 
-# ============================================================================
+# ===========================================================================
 # ENTRENAMIENTO ML (exclusiones de fechas)
-# ============================================================================
+# ===========================================================================
 
 def ml_train_date_kept(dates: pd.Series) -> pd.Series:
     """

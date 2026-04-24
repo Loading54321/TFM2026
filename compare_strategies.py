@@ -1,6 +1,7 @@
 """
 compare_strategies.py
 =====================
+# v2 final — Abril 2026
 Tabla comparativa anual OOS (semanal):
   1. LightGBM / RandomForest — Half-Kelly Diagonal Long-Short
   2. RegimeLGBM — 3 LGBM especializados por régimen HMM (Half-Kelly Diagonal Long-Short)
@@ -9,7 +10,7 @@ Tabla comparativa anual OOS (semanal):
   5. Top-3 EW  — Top-3 por predicted_return, pesos iguales, solo largo
 
 Todas las series tienen frecuencia semanal (W-FRI).  Los costes de transacción
-se aplican con COST_BPS por leg, definido en config.py.
+se aplican con COST_BPS por leg, definido en config.py
 """
 
 import os

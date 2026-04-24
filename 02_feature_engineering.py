@@ -1,6 +1,7 @@
 """
 02_feature_engineering.py
 ==========================
+# v2 final — Abril 2026
 Construye el dataset final en formato LONG (panel):
   índice  = (date, etf)
   columnas = features + target
@@ -301,7 +302,7 @@ def build_feature_matrix(sector_etfs: list = None) -> pd.DataFrame:
     })
     panel = panel.merge(spy_feat, on="date", how="left")
 
-    # ── 7. Macro FRED ─────────────────────────────────────────────────────────
+    # ── 7. Macro FRED ────────────────────────────────────────────────────────
     print("[FE] Mergeando macro FRED...")
     macro_reset = macro.reset_index()
     if macro_reset.columns[0] != "date":

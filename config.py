@@ -1,6 +1,7 @@
 """
 config.py
 =========
+# v2 final — Abril 2026
 Configuración centralizada del proyecto TFM.
 
 Todos los parámetros globales están aquí para fácil mantenimiento:
@@ -14,7 +15,7 @@ DEV_MODE
 --------
   True  → parámetros reducidos para desarrollo rápido (~2-3 min por modelo).
            Cambia solo OOS_START y n_estimators; la lógica del código NO varía.
-  False → configuración completa para el TFM final (~8-10 min por modelo).
+  False → configuración completa para el TFM final (~8-10 min por modelo)
 """
 
 import os
