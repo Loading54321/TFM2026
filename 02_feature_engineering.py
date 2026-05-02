@@ -30,7 +30,7 @@ REGLA ANTI-LEAKAGE
 FEATURES — tres bloques
 ───────────────────────
   1. ETF-específicas (varían por ETF y por fecha):
-       ret_1w, ret_4w, ret_13w, ret_26w, ret_52w,
+       ret_1w, ret_4w, ret_8w, ret_13w, ret_52w,
        momentum_52_4 (retorno acumulado 52w excluyendo últimas 4w),
        vol_26w (volatilidad rolling anualizada, ventana 26w)
        excess_ret_1w  = ret_1w  - spy_ret_1w   (rendimiento relativo 1w)
@@ -38,7 +38,7 @@ FEATURES — tres bloques
        excess_ret_52w = ret_52w - spy_ret_52w  (rendimiento relativo 52w)
 
   2. Cross-seccionales por fecha (rank dentro del corte transversal):
-       ret_1w_rank, ret_4w_rank, ret_13w_rank, ret_26w_rank,
+       ret_1w_rank, ret_4w_rank, ret_8w_rank, ret_13w_rank,
        ret_52w_rank, vol_26w_rank
        [0=peor, 1=mejor dentro del grupo de ETFs esa semana]
 
@@ -145,8 +145,8 @@ def compute_etf_features(prices: pd.DataFrame, sector_etfs: list) -> pd.DataFram
     Genera features de momentum, volatilidad y RSI por ETF a frecuencia semanal:
       ret_1w        retorno 1 semana
       ret_4w        retorno acumulado 4 semanas (≈ 1 mes)
+      ret_8w        retorno acumulado 8 semanas (≈ 2 meses)
       ret_13w       retorno acumulado 13 semanas (≈ 1 trimestre)
-      ret_26w       retorno acumulado 26 semanas (≈ 6 meses)
       ret_52w       retorno acumulado 52 semanas (≈ 1 año)
       momentum_52_4 ret_52w − ret_4w  (momentum anual excluyendo el último mes)
       vol_26w       volatilidad rolling anualizada, ventana 26 semanas
@@ -167,8 +167,8 @@ def compute_etf_features(prices: pd.DataFrame, sector_etfs: list) -> pd.DataFram
         d["return"]        = r
         d["ret_1w"]        = r
         d["ret_4w"]        = r.rolling(4).sum()
+        d["ret_8w"]        = r.rolling(8).sum()
         d["ret_13w"]       = r.rolling(13).sum()
-        d["ret_26w"]       = r.rolling(26).sum()
         d["ret_52w"]       = r.rolling(52).sum()
         d["momentum_52_4"] = r.rolling(52).sum() - r.rolling(4).sum()
         d["vol_26w"]       = r.rolling(26).std() * np.sqrt(52)
@@ -182,7 +182,7 @@ def compute_etf_features(prices: pd.DataFrame, sector_etfs: list) -> pd.DataFram
     panel.reset_index(inplace=True)
 
     # ffill de gaps puntuales por ETF (festivos o datos ausentes esporádicos)
-    feat_cols = ["ret_1w", "ret_4w", "ret_13w", "ret_26w", "ret_52w",
+    feat_cols = ["ret_1w", "ret_4w", "ret_8w", "ret_13w", "ret_52w",
                  "momentum_52_4", "vol_26w", "rsi_9w", "rsi_14w", "rsi_26w"]
     panel.sort_values(["etf", "date"], inplace=True)
     panel[feat_cols] = panel.groupby("etf")[feat_cols].ffill()
@@ -203,8 +203,8 @@ def add_cross_sectional_features(panel: pd.DataFrame) -> pd.DataFrame:
       rank alto (≈1) → ETF con mayor RSI relativo (más sobrecomprado en el grupo)
       rank bajo (≈0) → ETF con menor RSI relativo (más sobrevendido en el grupo)
     """
-    for col in ["ret_1w", "ret_4w", "ret_13w", "ret_26w", "ret_52w", "vol_26w",
-                "rsi_9w", "rsi_14w", "rsi_26w"]:
+    for col in ["ret_1w", "ret_4w", "ret_8w", "ret_13w", "ret_52w",
+                "vol_26w", "rsi_9w", "rsi_14w", "rsi_26w"]:
         if col in panel.columns:
             panel[f"{col}_rank"] = (
                 panel.groupby("date")[col]
@@ -351,9 +351,9 @@ def build_feature_matrix(sector_etfs: list = None) -> pd.DataFrame:
     print(f"[FE] ETFs incluidos ({len(sector_etfs)}): {sector_etfs}")
     print(f"[FE] Target: exceso de retorno ETF vs SPY en t+1 (semanal)")
 
-    _etf_base  = {"ret_1w","ret_4w","ret_13w","ret_26w","ret_52w",
+    _etf_base  = {"ret_1w","ret_4w","ret_8w","ret_13w","ret_52w",
                   "momentum_52_4","vol_26w","rsi_9w","rsi_14w","rsi_26w"}
-    _etf_rank  = {f"{c}_rank" for c in ["ret_1w","ret_4w","ret_13w","ret_26w",
+    _etf_rank  = {f"{c}_rank" for c in ["ret_1w","ret_4w","ret_8w","ret_13w",
                                          "ret_52w","vol_26w",
                                          "rsi_9w","rsi_14w","rsi_26w"]}
     _etf_exc   = {"excess_ret_1w","excess_ret_13w","excess_ret_52w"}

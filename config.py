@@ -27,7 +27,7 @@ load_dotenv()
 # ============================================================================
 # MODO DESARROLLO  ← cambiar a False para la ejecución final del TFM
 # ============================================================================
-DEV_MODE = False
+DEV_MODE = True   # ← PROVISIONAL: volver a False para ejecución final TFM
 
 # ============================================================================
 # DIRECTORIOS
