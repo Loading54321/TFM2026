@@ -58,6 +58,12 @@ from utils import weekly_forward_returns
 # Nº de periodos por año (semanas W-FRI) para anualizar métricas.
 WEEKS_PER_YEAR = 52
 
+# Filtro de universo: solo ETFs con beta rolling >= BETA_MIN entran en cartera.
+# BETA_WINDOW: ventana causal en semanas (52w ≈ 1 año, mismo horizonte que vol_52w).
+# BETA_MIN: umbral; 1.0 significa sensibilidad >= mercado (amplifica movimientos SPY).
+BETA_WINDOW = 52
+BETA_MIN    = 1.0
+
 
 # ── Metricas ──────────────────────────────────────────────────────────────────
 
@@ -322,6 +328,19 @@ def build_portfolio(
     print(f"  [Validacion] {n_aligned}/{len(pred_dates)} semanas con retorno t+1 disponible "
           f"({n_aligned/len(pred_dates):.1%})")
 
+    # ── Pre-cómputo de betas rolling causales (una sola pasada) ───────────────
+    # beta_matrix[etf][t] = Cov(r_etf, r_SPY) / Var(r_SPY) en ventana [t-51, t]
+    # Causal: rolling calcula solo con datos hasta t; no hay lookahead.
+    spy_r        = prices["SPY"].pct_change()
+    spy_var_roll = spy_r.rolling(BETA_WINDOW).var().replace(0, np.nan)
+    beta_matrix  = pd.DataFrame(index=prices.index)
+    for _etf in [c for c in prices.columns if c != "SPY"]:
+        beta_matrix[_etf] = (
+            prices[_etf].pct_change().rolling(BETA_WINDOW).cov(spy_r) / spy_var_roll
+        )
+    print(f"  [Beta] Filtro universo: beta rolling {BETA_WINDOW}w >= {BETA_MIN} "
+          f"(causal, pre-calculado para {len(beta_matrix.columns)} ETFs)")
+
     results    = []
     prev_long  = set()
     prev_short = set()
@@ -330,9 +349,30 @@ def build_portfolio(
 
     for date, group in preds.groupby("date"):
 
+        # ── Filtro de universo por beta (causal) ──────────────────────────────
+        # Se usa el valor de beta_matrix en la semana de decision t.
+        # Si t no esta exactamente en el indice de prices, se toma el ultimo
+        # valor disponible <= t (precios ya son W-FRI, coinciden en la practica).
+        if date in beta_matrix.index:
+            beta_t = beta_matrix.loc[date]
+        else:
+            avail = beta_matrix.loc[beta_matrix.index <= date]
+            beta_t = avail.iloc[-1] if not avail.empty else pd.Series(dtype=float)
+
+        high_beta = [
+            e for e in group["etf"].unique()
+            if e in beta_t.index and pd.notna(beta_t[e]) and beta_t[e] >= BETA_MIN
+        ]
+
+        # Fallback: si quedan < TOP_N ETFs con beta >= BETA_MIN, se usa el
+        # universo completo para no dejar la pata larga sin candidatos.
+        if len(high_beta) < TOP_N:
+            high_beta = list(group["etf"].unique())
+
+        group       = group[group["etf"].isin(high_beta)]
         pred_by_etf = group.set_index("etf")["predicted_return"]
 
-        # ── Seleccion de candidatos (sin filtros) ─────────────────────────────
+        # ── Seleccion de candidatos sobre universo filtrado ───────────────────
         top_etfs    = group.nsmallest(TOP_N,   "rank")["etf"].tolist()
         bottom_etfs = (
             group.nlargest(short_n, "rank")["etf"].tolist() if short_n > 0 else []

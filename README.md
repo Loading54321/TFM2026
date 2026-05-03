@@ -1,6 +1,6 @@
 # Sector Rotation Strategy — TFM Código v2
 
-> **Versión final de presentación — Abril 2026**
+> **Versión final de presentación — Mayo 2026**
 
 Estrategia cuantitativa de rotación sectorial con Machine Learning y detección de
 regímenes de mercado (Hidden Markov Model). Pipeline semanal, walk-forward estricto,
@@ -20,17 +20,17 @@ diseñado sin data leakage.
 ```
 TFM codigo v2/
 │
-├── 01_data_download.py          Descarga ETFs (yfinance), macro (FRED), FF5
+├── 01_data_download.py          Descarga ETFs (yfinance), macro (FRED + Gold + Oil), FF5
 ├── 02_feature_engineering.py    Construye panel long (date × etf) con features + target semanal
 ├── 03_market_regime_detection.py Visualización HMM + CSV de respaldo + diagnósticos BIC
 ├── 04_walk_forward_training.py   Walk-forward LightGBM/RF + HMM + EDA por régimen
-├── 04b_regime_walk_forward.py    Walk-forward con 3 LGBM especializados por régimen HMM
-├── 05_strategy_backtest.py       Backtest Long-Short Half-Kelly diagonal, métricas vs SPY
+├── 04b_regime_walk_forward.py    Walk-forward RegimeLGBM: LGBM con régimen HMM como feature
+├── 05_strategy_backtest.py       Backtest Long-Short Kelly diagonal, métricas vs SPY
 ├── 06_signal_evaluation.py       IC rolling, análisis quintiles, hit rate (Jansen cap.12)
 ├── compare_strategies.py         Comparación anual OOS: LightGBM / RF / RegimeLGBM / SPY
 │
 ├── config.py                    Todos los parámetros centralizados
-├── models.py                    RandomForest, GradientBoosting; LightGBM configurado en 04
+├── models.py                    RandomForest y LightGBM (configurados en config.py)
 ├── regime_model.py              GaussianHMM: fit, forward filter, Viterbi, diagnósticos
 ├── utils.py                     Carga de datos, get_feature_cols, helpers
 │
@@ -48,19 +48,17 @@ TFM codigo v2/
     ├── market_regimes_plot.png
     ├── predictions_LightGBM.csv
     ├── predictions_RandomForest.csv
-    ├── predictions_RegimeLGBM.csv         ← nuevo (04b)
+    ├── predictions_RegimeLGBM.csv
     ├── eda_etf_by_regime.csv
     ├── eda_etf_by_regime.png
     ├── feature_importance_LightGBM.csv
     ├── feature_importance_RandomForest.csv
-    ├── feature_importance_LGBM_Bear.csv   ← nuevo (04b)
-    ├── feature_importance_LGBM_Ranging.csv ← nuevo (04b)
-    ├── feature_importance_LGBM_Bull.csv   ← nuevo (04b)
+    ├── feature_importance_RegimeLGBM.csv
     ├── signal_evaluation_IC_*.csv
     ├── signal_evaluation_quintiles_*.csv
     ├── signal_evaluation_plot.png
     ├── backtest_chart.png
-    └── comparison_chart.png               ← nuevo (compare_strategies)
+    └── comparison_chart.png
 ```
 
 ---
@@ -92,19 +90,22 @@ Frecuencia: **semanal** (W-FRI), 2000–2024
 
 | Grupo | Features |
 |---|---|
-| Retornos ETF | `ret_1w`, `ret_4w`, `ret_13w`, `ret_26w`, `ret_52w` |
+| Retornos ETF | `ret_1w`, `ret_3w`, `ret_4w`, `ret_7w`, `ret_8w`, `ret_13w`, `ret_26w`, `ret_52w` |
 | Momentum | `momentum_52_4` (52w excluyendo últimas 4w) |
-| Volatilidad | `vol_26w` (volatilidad rolling anualizada) |
+| Volatilidad | `vol_3w`, `vol_7w`, `vol_13w`, `vol_26w`, `vol_52w` (rolling anualizada) |
+| RSI Wilder | `rsi_9w`, `rsi_14w`, `rsi_26w` (suavizado EWM causal) |
 | Exceso vs SPY | `excess_ret_1w`, `excess_ret_13w`, `excess_ret_52w` |
-| Rank cross-seccional | `ret_1w_rank`, `ret_4w_rank`, `ret_13w_rank`, `ret_26w_rank`, `ret_52w_rank`, `vol_26w_rank` |
+| Rank cross-seccional | `ret_Xw_rank`, `vol_Xw_rank`, `rsi_Xw_rank` (percentil dentro del grupo esa semana) |
 | SPY | `spy_ret_1w`, `spy_ret_4w`, `spy_ret_52w` |
 | Fama-French 5 | `Mkt-RF`, `SMB`, `HML`, `RMW`, `CMA`, `RF` |
 | Macro — Ciclo económico | `CPI_YoY`, `IndProd_YoY`, `Unemployment`, `Unemp_Chg` |
 | Macro — Política monetaria | `FedFunds`, `FedFunds_Chg` |
-| Tipos de interés | `T3M`, `T10`, `YieldSpread` (10yr-2yr), `Term_Spread_10_3m` (10yr-3m), `T10_Chg` |
-| Riesgo mercado | `VIX`, `VIX_Chg`, `HY_OAS`, `HY_OAS_Chg` |
-| Oro | `Gold_ret_1w`, `Gold_ret_4w` |
-| HMM | `market_regime` (0=Bear, 1=Ranging, 2=Bull) |
+| Tipos de interés | `T3M`, `T10`, `YieldSpread` (10yr-2yr), `Term_Spread_10_3m`, `T10_Chg` |
+| Crédito y riesgo | `VIX`, `VIX_Chg`, `HY_OAS`, `HY_OAS_Chg`, `IG_OAS`, `IG_OAS_Chg` |
+| Bonos internacionales | `JGB10Y`, `JGB10Y_Chg`, `US_JP_Spread`, `RepoRate`, `RepoRate_Chg` |
+| Materias primas | `Gold_ret_1w`, `Gold_ret_4w`, `Oil_ret_1w`, `Oil_ret_4w` |
+| ISM / actividad | `ISM`, `ISM_Chg` (Chicago Fed NAI, proxy PMI manufacturero) |
+| HMM (solo 04b) | `market_regime`, `bear_prob`, `ranging_prob`, `bull_prob` |
 
 **Target**: exceso de retorno del ETF vs SPY en la semana t+1
 (`return_ETF(t+1) − return_SPY(t+1)`, shift −1 por ETF, sin leakage).
@@ -163,27 +164,28 @@ Análisis exploratorio ejecutado antes del walk-forward (requiere
   que el modelo aprenda dinámicas COVID atípicas
 - **Cross-seccional**: un solo modelo entrenado con todos los ETFs a la vez
 
-### Walk-Forward RegimeLGBM — Modelos especializados por régimen (`04b`)
+### Walk-Forward RegimeLGBM — LGBM con régimen como feature (`04b`)
 
-Arquitectura con **3 modelos LightGBM independientes**, uno por cada régimen del HMM:
+Un **único LightGBM** entrenado sobre todos los datos IS con cuatro features
+adicionales que codifican el régimen HMM de forma causal:
 
-| Modelo | Entrena sobre | Predice en |
-|---|---|---|
-| LGBM_Bear | Semanas históricas con régimen Bear | Semanas OOS con régimen Bear activo |
-| LGBM_Ranging | Semanas históricas con régimen Ranging | Semanas OOS con régimen Ranging activo |
-| LGBM_Bull | Semanas históricas con régimen Bull | Semanas OOS con régimen Bull activo |
-| LGBM_global | Todas las semanas históricas | Fallback si régimen_k tiene < MIN_REGIME_OBS |
+| Feature | Descripción |
+|---|---|
+| `market_regime` | Régimen más probable (0=Bear, 1=Ranging, 2=Bull; −1 fuera de ventana HMM) |
+| `bear_prob` | P(Bear \| observaciones pasadas) — forward filter causal |
+| `ranging_prob` | P(Ranging \| observaciones pasadas) — forward filter causal |
+| `bull_prob` | P(Bull \| observaciones pasadas) — forward filter causal |
 
 **Por paso walk-forward (semana OOS t)**:
-1. Ajustar GaussianHMM en ventana SPY `[TRAIN_START, t)` (EM/Baum-Welch)
-2. Forward filter causal → `P(régimen | obs_1..s)` para cada semana `s < t`
-3. Para cada régimen `k ∈ {Bear, Ranging, Bull}`: filtrar panel de train y entrenar LGBM_k
-4. Entrenar LGBM_global sobre todos los datos de train (fallback)
-5. Avanzar forward filter un paso hasta `t` → régimen_t actual
-6. Predecir con LGBM_{régimen_t} si disponible, o LGBM_global
+1. Ajustar GaussianHMM en ventana rodante [t − 260w, t) (EM/Baum-Welch)
+2. Forward filter causal → probabilidades de régimen para cada semana de train
+3. Añadir las 4 features de régimen al panel IS (probs uniformes 1/3 para semanas fuera de ventana)
+4. Entrenar 1 LGBM con 73 features base + 4 features de régimen = **77 features en total**
+5. Avanzar forward filter hasta t → régimen_t + probs_t
+6. Inyectar régimen_t en pred_data y predecir con el LGBM
 
 **Salidas**: `predictions_RegimeLGBM.csv` (columnas: date, etf, predicted_return, rank,
-target, regime, regime_name, model_used, bear_prob, ranging_prob, bull_prob)
+target, regime, regime_name, bear_prob, ranging_prob, bull_prob)
 
 ### Evaluación de señales — IC Analysis (Módulo 3, sección 2)
 
@@ -200,12 +202,12 @@ Umbrales de referencia (Grinold & Kahn 2000, *Active Portfolio Management*):
 - IC > 0.05 → señal débilmente útil; IC > 0.10 → moderadamente útil
 - ICIR > 0.50 → IC consistente; Hit Rate > 55% → buena direccionalidad
 
-### Estrategia de cartera — Long/Short con Half-Kelly diagonal
+### Estrategia de cartera — Long/Short con Kelly diagonal
 
-- **Long**: Top-`TOP_N` ETFs por retorno predicho, ponderación Half-Kelly diagonal por activo
+- **Long**: Top-`TOP_N` ETFs por retorno predicho, ponderación Kelly diagonal por activo
 - **Short**: Bottom-`BOTTOM_N` ETFs con **filtro doble** (pred < 0 AND |pred| > pred_Top1),
   peso = 0 si no cumple ambas condiciones (long-only parcial esa semana)
-- **Kelly diagonal**: `hk_i = KELLY_FRACTION × |pred_i| / var_i` (por activo, sin matriz de covarianza)
+- **Kelly diagonal**: `k_i = KELLY_FRACTION × |pred_i| / var_i` (por activo, sin matriz de covarianza)
 - **var_i**: varianza histórica causal de `KELLY_LOOKBACK_WEEKS` semanas (solo datos ≤ t)
 - **Retorno semanal** = Σ(w_long × ret_long_t+1) − Σ(|w_short| × ret_short_t+1)  (dollar-neutral)
 - **Rebalanceo semanal** (cada viernes W-FRI); costes de transacción: `COST_BPS` bps por
@@ -214,14 +216,14 @@ Umbrales de referencia (Grinold & Kahn 2000, *Active Portfolio Management*):
 
 ### Comparación de estrategias (`compare_strategies.py`)
 
-Tabla y gráfico comparativo anual OOS (2020–2024):
+Tabla y gráfico comparativo anual OOS:
 
 | Estrategia | Descripción |
 |---|---|
-| LightGBM | Modelo global, Half-Kelly diagonal, Long-Short |
-| RandomForest | Modelo global, Half-Kelly diagonal, Long-Short |
-| RegimeLGBM | 3 LGBM especializados por régimen, Half-Kelly diagonal, Long-Short |
-| X Top3 | Modelo base, solo pata larga (Top-N, Half-Kelly diagonal Long-Only) |
+| LightGBM | Modelo global, Kelly diagonal, Long-Short |
+| RandomForest | Modelo global, Kelly diagonal, Long-Short |
+| RegimeLGBM | LGBM con régimen HMM como feature, Kelly diagonal, Long-Short |
+| X Top3 | Modelo base, solo pata larga (Top-N, Kelly diagonal Long-Only) |
 | Top-3 EW | Top-N por predicted_return, pesos iguales, con mismos costes `COST_BPS` |
 | SPY | Benchmark pasivo Buy & Hold |
 
@@ -242,6 +244,7 @@ Evaluación **IS** (2008–2019) y **OOS** (2020–2024) vs SPY benchmark
 | Macro FRED | Transformaciones YoY/diff sobre datos hasta t |
 | HMM parámetros | EM entrenado solo con datos `< t` en cada paso walk-forward |
 | HMM regime_t | Forward filter causal con observación de t (sin backward pass) |
+| Features régimen train | Forward filter causal por semana; probs uniformes para datos fuera de ventana |
 | ML training data | Siempre `date < t` (nunca incluye t ni futuro) |
 | Target | `excess_return.shift(-1)` por ETF — el retorno de t+1 nunca es feature |
 | Backtest | Retorno de t+1: `weekly_forward_returns(prices, dates).loc[t]` (shift(-1)) |
@@ -280,7 +283,7 @@ python run_all.py
 # Orden: 02 → 03 → 04 → 04b → 05 → 06 → compare_strategies
 ```
 
-### 5. Re-ejecutar solo modelos (datos ya descargados).
+### 5. Re-ejecutar solo modelos (datos ya descargados)
 
 ```bash
 python run_models_only.py
@@ -311,8 +314,8 @@ python compare_strategies.py       # solo tabla comparativa
 | `HMM_CONTEXT_PERIODS` | 235 semanas (~4.5 años) | Ventana forward filter HMM en 04 |
 | `ML_TRAIN_EXCLUDE_PERIODS` | [(2020-01, 2021-12)] | Periodos excluidos del entrenamiento ML |
 | `TOP_N` / `BOTTOM_N` | 3 / 3 | ETFs long / short por semana |
-| `KELLY_FRACTION` | 0.5 | Half-Kelly (fracción del Kelly completo) |
-| `KELLY_LOOKBACK_WEEKS` | 36 | Ventana causal (semanas) para var_i en Half-Kelly |
+| `KELLY_FRACTION` | 1.0 | Kelly completo (fracción del Kelly) |
+| `KELLY_LOOKBACK_WEEKS` | 36 | Ventana causal (semanas) para var_i en Kelly |
 | `COST_BPS` | 10 | Basis points por leg en costes de transacción |
 | `RANDOM_SEED` | 42 | Reproducibilidad |
 | RF `n_estimators` | 50 (dev) / 200 (final) | Árboles Random Forest |
