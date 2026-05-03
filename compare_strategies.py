@@ -3,9 +3,9 @@ compare_strategies.py
 =====================
 # v2 final — Abril 2026
 Tabla comparativa anual OOS (semanal):
-  1. LightGBM / RandomForest — Half-Kelly Diagonal Long-Short
-  2. RegimeLGBM — 3 LGBM especializados por régimen HMM (Half-Kelly Diagonal Long-Short)
-  3. X Top3    — igual modelo, solo pata larga (Half-Kelly Diagonal Long-Only)
+  1. LightGBM / RandomForest — Kelly Diagonal Long-Short
+  2. RegimeLGBM — 3 LGBM especializados por régimen HMM (Kelly Diagonal Long-Short)
+  3. X Top3    — igual modelo, solo pata larga (Kelly Diagonal Long-Only)
   4. SPY       — benchmark pasivo buy & hold
   5. Top-3 EW  — Top-3 por predicted_return, pesos iguales, solo largo
 
@@ -109,7 +109,7 @@ def build_ew_portfolio(
     )
 
 
-# ── portafolio Half-Kelly long-only (solo Top-N) ─────────────────────────────
+# ── portafolio Kelly long-only (solo Top-N) ──────────────────────────────────
 
 def build_kelly_longonly(
     pred_path: str,
@@ -117,7 +117,7 @@ def build_kelly_longonly(
     transaction_costs: bool = True,
 ) -> pd.Series:
     """
-    Portafolio Half-Kelly con solo la pata larga (Top-N ETFs).
+    Portafolio Kelly con solo la pata larga (Top-N ETFs).
 
     Wrapper sobre build_portfolio(long_only=True): usa exactamente la misma
     lógica de ponderación, retorno t+1 y costes que la estrategia completa
@@ -142,7 +142,7 @@ def run_comparison():
     prices      = pd.read_csv(prices_path, index_col=0, parse_dates=True)
 
     strategies = {}
-    longonly   = {}   # pata larga Half-Kelly Top-N de cada modelo
+    longonly   = {}   # pata larga Kelly Top-N de cada modelo
     shortleg   = {}   # pata corta standalone: -short_return (positivo = ganancia en corto)
 
     for model in ["LightGBM", "RandomForest"]:
@@ -236,9 +236,9 @@ def run_comparison():
     print(sep)
     print()
     print("Notas:")
-    print(f"  X Kelly      = Half-Kelly Diagonal: Top{TOP_N} largo + Bottom{BOTTOM_N} corto "
+    print(f"  X Kelly      = Kelly Diagonal: Top{TOP_N} largo + Bottom{BOTTOM_N} corto "
           f"(filtro: pred<0 AND |pred|>pred_Top1)")
-    print(f"  X Top3       = Solo pata larga: Top{TOP_N} con pesos Half-Kelly Diagonal, sin posiciones cortas")
+    print(f"  X Top3       = Solo pata larga: Top{TOP_N} con pesos Kelly Diagonal, sin posiciones cortas")
     print("  X Short3     = Solo pata corta standalone: -short_return del modelo completo")
     print("                 (positivo = ganancia en corto; 0 = semana sin posición por filtro simétrico)")
     print(f"  Top-3 EW(RF) = Top-{TOP_N} RandomForest, peso 1/{TOP_N} c/u, largo, con costos {COST_BPS} bps (benchmark EW)")
@@ -262,7 +262,7 @@ def plot_cumulative(strategies: dict, oos_idx):
     """
     Gráfico de retorno acumulado (valor de $1 invertido):
       · X Kelly  (todos los modelos) — portafolio Long-Short completo con
-        Half-Kelly diagonal y filtro: pred<0 AND |pred|>pred_Top1 (línea sólida gruesa)
+        Kelly diagonal y filtro: pred<0 AND |pred|>pred_Top1 (línea sólida gruesa)
       · X Top3   (todos los modelos) — pata larga Kelly long-only (línea punteada,
         mismo color que su Kelly, para aislar la contribución del corto)
       · SPY                          — benchmark pasivo
@@ -286,7 +286,7 @@ def plot_cumulative(strategies: dict, oos_idx):
                              gridspec_kw={"height_ratios": [3, 1.5]})
     fig.suptitle(
         f"Portafolio Long-Short Kelly (—) vs Top-{TOP_N} Long-Only (--) vs SPY  |  Por Modelo\n"
-        f"OOS {OOS_START[:4]}–{OOS_END[:4]}  (semanal)  |  Half-Kelly Diagonal · "
+        f"OOS {OOS_START[:4]}–{OOS_END[:4]}  (semanal)  |  Kelly Diagonal · "
         f"Filtro: pred<0 AND |pred|>pred_Top1 · Costos {COST_BPS} bps",
         fontsize=12, fontweight="bold",
     )

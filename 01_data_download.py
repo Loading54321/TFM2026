@@ -146,6 +146,24 @@ def download_fred() -> pd.DataFrame:
     if "HY_OAS" in df.columns:
         df["HY_OAS_Chg"] = df["HY_OAS"].diff(1)
 
+    # Tasa repo (SOFR, diaria desde 2018): diff semanal
+    if "RepoRate" in df.columns:
+        df["RepoRate_Chg"] = df["RepoRate"].diff(1)
+
+    # Bono Japón 10Y (mensual, ffill a W-FRI): diff semanal y spread vs T10
+    if "JGB10Y" in df.columns:
+        df["JGB10Y_Chg"] = df["JGB10Y"].diff(1)
+        if "T10" in df.columns:
+            df["US_JP_Spread"] = df["T10"] - df["JGB10Y"]
+
+    # Crédito grado inversión (diario desde 1997): diff semanal
+    if "IG_OAS" in df.columns:
+        df["IG_OAS_Chg"] = df["IG_OAS"].diff(1)
+
+    # ISM Manufacturing PMI (mensual, ffill a W-FRI): diff semanal
+    if "ISM" in df.columns:
+        df["ISM_Chg"] = df["ISM"].diff(1)
+
     df.to_csv(f"{DATA_DIR}/fred_macro.csv")
     feature_list = list(df.columns)
     print(f"\n  -> {df.shape} guardadas en {DATA_DIR}/fred_macro.csv")
@@ -159,7 +177,7 @@ def download_gold() -> pd.DataFrame:
     Descarga el precio diario del oro (GC=F) y resamplea a W-FRI + ffill.
     Calcula retornos 1 semana y 4 semanas (≈ 1 mes).
     """
-    print("[GOLD] Descargando oro (GC=F) via yfinance (diario → W-FRI)...")
+    print("[GOLD] Descargando oro (GC=F) via yfinance (diario -> W-FRI)...")
     raw = yf.download(
         "GC=F", start=DATA_START, end=DATA_END,
         interval="1d", auto_adjust=True, progress=False
@@ -180,6 +198,35 @@ def download_gold() -> pd.DataFrame:
     n_valid = gold_ret_1w.notna().sum()
     print(f"  -> Gold_ret_1w / Gold_ret_4w: {n_valid} obs válidas")
     return pd.DataFrame({"Gold_ret_1w": gold_ret_1w, "Gold_ret_4w": gold_ret_4w})
+
+
+# 2c. Petróleo WTI via yfinance
+def download_oil() -> pd.DataFrame:
+    """
+    Descarga el precio diario del petróleo crudo WTI (CL=F) via yfinance
+    y resamplea a W-FRI + ffill.
+    Calcula retornos 1 semana y 4 semanas (≈ 1 mes).
+    """
+    print("[OIL] Descargando petroleo WTI (CL=F) via yfinance (diario -> W-FRI)...")
+    raw = yf.download(
+        "CL=F", start=DATA_START, end=DATA_END,
+        interval="1d", auto_adjust=True, progress=False
+    )["Close"]
+
+    if isinstance(raw, pd.DataFrame):
+        raw = raw.squeeze()
+
+    raw.index = pd.to_datetime(raw.index)
+    raw = raw.sort_index().rename("Oil")
+
+    raw = raw.resample("W-FRI").last().ffill()
+
+    oil_ret_1w = raw.pct_change(1).rename("Oil_ret_1w")
+    oil_ret_4w = raw.pct_change(4).rename("Oil_ret_4w")
+
+    n_valid = oil_ret_1w.notna().sum()
+    print(f"  -> Oil_ret_1w / Oil_ret_4w: {n_valid} obs válidas")
+    return pd.DataFrame({"Oil_ret_1w": oil_ret_1w, "Oil_ret_4w": oil_ret_4w})
 
 
 # 3. Factores Fama & French
@@ -247,12 +294,34 @@ if __name__ == "__main__":
     gold_df     = download_gold()
     ff5_factors = download_ff5()
 
-    # Incorporar Gold al CSV macro (merge sobre índice fecha)
+    # Incorporar Gold y Oil al CSV macro (merge sobre índice fecha)
+    # Si yfinance devuelve datos vacíos por rate-limit se preservan los valores anteriores.
     macro_path = f"{DATA_DIR}/fred_macro.csv"
     macro_df   = pd.read_csv(macro_path, index_col=0, parse_dates=True)
-    macro_df = macro_df.join(gold_df, how="left")
+
+    # Gold
+    gold_valid = gold_df["Gold_ret_1w"].notna().sum() if "Gold_ret_1w" in gold_df.columns else 0
+    if gold_valid > 0:
+        for col in gold_df.columns:
+            macro_df[col] = gold_df[col]
+        print(f"  -> Gold actualizado en {macro_path}  "
+              f"(Gold_ret_1w NaN: {macro_df['Gold_ret_1w'].isna().sum()})")
+    else:
+        print("  [WARN] Gold descarga vacia: conservando valores anteriores en fred_macro.csv")
+
     macro_df.to_csv(macro_path)
-    print(f"  -> Gold añadido a {macro_path}  "
-          f"(Gold_ret_1w NaN: {macro_df['Gold_ret_1w'].isna().sum()})")
+
+    oil_df    = download_oil()
+    macro_df  = pd.read_csv(macro_path, index_col=0, parse_dates=True)
+    oil_valid = oil_df["Oil_ret_1w"].notna().sum() if "Oil_ret_1w" in oil_df.columns else 0
+    if oil_valid > 0:
+        for col in oil_df.columns:
+            macro_df[col] = oil_df[col]
+        print(f"  -> Oil actualizado en {macro_path}  "
+              f"(Oil_ret_1w NaN: {macro_df['Oil_ret_1w'].isna().sum()})")
+    else:
+        print("  [WARN] Oil descarga vacia: conservando valores anteriores en fred_macro.csv")
+
+    macro_df.to_csv(macro_path)
 
     print("\n[OK] Datos descargados correctamente en /data/ (frecuencia semanal W-FRI)")

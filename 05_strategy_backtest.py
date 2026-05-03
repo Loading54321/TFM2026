@@ -9,7 +9,7 @@ Predicciones y rebalanceo: frecuencia semanal (último viernes de cada semana).
 La decisión de asignación se toma cada viernes con información <= t; los
 retornos se devengan entre t y t+1 (semana siguiente) usando precios W-FRI.
 
-Estrategia Long-Short con Half-Kelly diagonal por activo:
+Estrategia Long-Short con Kelly diagonal por activo:
   Long   Top-N  ETFs  (mayor retorno predicho)
   Short  Bottom-N ETFs (menor retorno predicho) — con filtro de validación
 
@@ -21,20 +21,20 @@ Estrategia Long-Short con Half-Kelly diagonal por activo:
 
   Ponderación (N = activos que pasaron los filtros, entre 3 y 6):
     1. Peso base:     w_i = 1/N  (positivo para longs, negativo para shorts)
-    2. Half-Kelly:    hk_i = KELLY_FRACTION * |pred_i| / var_i  (diagonal, por activo)
+    2. Kelly:         hk_i = KELLY_FRACTION * |pred_i| / var_i  (diagonal, por activo)
     3. Peso ajustado: a_i  = w_i * hk_i
     4. Normalización: w_final_i = a_i / sum(|a_j|)  → suma 100 % del capital
 
   donde var_i es la varianza histórica causal del activo i (ventana
   KELLY_LOOKBACK_WEEKS semanas).  Fallback a pesos iguales 1/N si todos los
-  half-Kelly son cero.
+  Kelly son cero.
 
 Retorno semanal = sum(w_long * ret_long_t+1) − sum(|w_short| * ret_short_t+1)
 
 
 Anti-leakage:
   - Retornos de la semana t+1: prices.reindex(dates).pct_change().shift(-1)
-  - var_i para Half-Kelly: sólo precios semanales <= t (causal,
+  - var_i para Kelly: sólo precios semanales <= t (causal,
     ventana KELLY_LOOKBACK_WEEKS)
   - Predicciones: ya causales del walk-forward expansivo (date < t)
   - Costes de transacción cobrados en el periodo t+1 sobre el turnover
@@ -132,16 +132,10 @@ def kelly_weights_multiasset(
                  (ventana de `lookback` semanas anteriores a current_date)
 
     Post-procesado:
-      - Half-Kelly: f = kelly_fraction * f*  (0.5 por defecto)
+      - Kelly: f = kelly_fraction * f*  (1.0 por defecto = Kelly completo)
       - Pesos negativos -> 0 (Kelly no puede revertir la direccion asignada)
       - Normalizacion: los n pesos positivos suman 1 (100 % del capital)
       - Fallback a pesos iguales (1/n) si la suma es <= 0
-
-    Por que half-Kelly:
-      El Kelly completo maximiza el crecimiento logaritmico asintoticamente
-      pero es muy sensible a errores en la estimacion de mu.  Half-Kelly
-      reduce el drawdown ~50 % a costa de ~25 % menos de retorno esperado,
-      y es el estandar en gestion cuantitativa con estimaciones ruidosas.
 
     Causalidad (anti look-ahead):
       Sigma se estima sobre hist_ret.index <= current_date — nunca se usan
@@ -191,7 +185,7 @@ def kelly_weights_multiasset(
     except np.linalg.LinAlgError:
         f_star = np.linalg.lstsq(Sigma_eff, m_eff, rcond=None)[0]
 
-    # Half-Kelly y eliminacion de pesos negativos (sin inversion de direccion)
+    # Kelly y eliminacion de pesos negativos (sin inversion de direccion)
     f = np.clip(kelly_fraction * f_star, 0.0, None)
 
     total = f.sum()
@@ -205,7 +199,7 @@ def kelly_weights_multiasset(
     return f_series[long_etfs], f_series[short_etfs]
 
 
-# ── Kelly diagonal por activo (Half-Kelly simple) ─────────────────────────────
+# ── Kelly diagonal por activo ─────────────────────────────────────────────────
 
 def simple_kelly_weights(
     long_etfs: list,
@@ -217,14 +211,14 @@ def simple_kelly_weights(
     kelly_fraction: float = KELLY_FRACTION,
 ) -> tuple:
     """
-    Ponderación Half-Kelly diagonal (por activo) para una cartera long-short.
+    Ponderación Kelly diagonal (por activo) para una cartera long-short.
 
     Algoritmo:
       N   = len(long_etfs) + len(short_etfs)   (activos que pasaron los filtros)
 
       Para cada activo i:
         var_i   = varianza histórica causal de retornos SEMANALES (ventana lookback)
-        hk_i    = kelly_fraction * |pred_i| / var_i    (escalar Half-Kelly positivo)
+        hk_i    = kelly_fraction * |pred_i| / var_i    (escalar Kelly positivo)
         base_i  = 1/N  (positivo para longs, negativo para shorts)
         adj_i   = base_i * hk_i
 
@@ -286,7 +280,7 @@ def build_portfolio(
     long_only: bool = False,
 ) -> pd.DataFrame:
     """
-    Construye retornos SEMANALES del portafolio Long-Short con Half-Kelly diagonal.
+    Construye retornos SEMANALES del portafolio Long-Short con Kelly diagonal.
 
     Las predicciones son semanales (W-FRI) y se utilizan todas ellas — cada
     viernes se toma una decisión de asignación con información <= t y se cobra
@@ -298,7 +292,7 @@ def build_portfolio(
       SHORT — Bottom-N ETFs que cumplen: pred<0 AND |pred|>pred_Top1
               (desactivado si long_only=True)
 
-      Ponderacion con simple_kelly_weights() — Half-Kelly diagonal:
+      Ponderacion con simple_kelly_weights() — Kelly diagonal:
         N     = activos que pasaron filtros (TOP_N a TOP_N+BOTTOM_N)
         hk_i  = KELLY_FRACTION * |pred_i| / var_i   (por activo, causal)
         w_i   = (1/N * hk_i) / sum(|1/N * hk_j|)   → suma 100 % capital
@@ -312,7 +306,7 @@ def build_portfolio(
 
     Anti-leakage:
       - Retornos t+1: prices.reindex(dates).pct_change().shift(-1)
-      - var_i para Half-Kelly: sólo precios semanales <= t (KELLY_LOOKBACK_WEEKS)
+      - var_i para Kelly: sólo precios semanales <= t (KELLY_LOOKBACK_WEEKS)
       - Predicciones: ya causales del walk-forward expansivo (date < t)
       - Turnover: referencia al portfolio anterior (t-1), nunca a t+1
     """
@@ -380,7 +374,7 @@ def build_portfolio(
         else:
             short_etfs = []
 
-        # ── Half-Kelly diagonal por activo: posiciones filtradas ──────────────
+        # ── Kelly diagonal por activo: posiciones filtradas ──────────────────
         long_w, short_w = simple_kelly_weights(
             long_etfs, short_etfs, pred_by_etf, prices, date,
             lookback=kelly_lookback, kelly_fraction=kelly_fraction,
@@ -435,7 +429,7 @@ def build_portfolio(
     total_filtered   = int(df["n_short_filtered"].sum())
     weeks_partial    = int(((df["n_short"] > 0) & (df["n_short_filtered"] > 0)).sum())
     mode_str = "long-only" if long_only else f"long-short top{TOP_N}/bottom{BOTTOM_N}"
-    print(f"  [Portafolio] {len(df)} semanas | Half-Kelly diagonal {mode_str}")
+    print(f"  [Portafolio] {len(df)} semanas | Kelly diagonal {mode_str}")
     if not long_only:
         print(f"  [Filtro corto] ETFs bottom filtrados (pred>=0 o |pred|<=pred_Top1): "
               f"{total_filtered} en total "
@@ -534,7 +528,7 @@ if __name__ == "__main__":
             continue
 
         print(f"\n{'='*60}")
-        print(f" Modelo: {model_name}  |  Half-Kelly Diagonal Top{TOP_N}/Bottom{BOTTOM_N}")
+        print(f" Modelo: {model_name}  |  Kelly Diagonal Top{TOP_N}/Bottom{BOTTOM_N}")
         print(f"{'='*60}")
 
         oos_df = build_portfolio(pred_path, prices_path)
@@ -574,7 +568,7 @@ if __name__ == "__main__":
     if plot_data:
         plot_cumulative(
             plot_data,
-            title=f"Sector Rotation — Half-Kelly Diagonal Top{TOP_N}/Bottom{BOTTOM_N} vs SPY  [OOS {OOS_START[:4]}-{OOS_END[:4]}]",
+            title=f"Sector Rotation — Kelly Diagonal Top{TOP_N}/Bottom{BOTTOM_N} vs SPY  [OOS {OOS_START[:4]}-{OOS_END[:4]}]",
         )
 
     print("[OK] Backtest completado.")
