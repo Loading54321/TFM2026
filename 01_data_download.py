@@ -164,6 +164,35 @@ def download_fred() -> pd.DataFrame:
     if "ISM" in df.columns:
         df["ISM_Chg"] = df["ISM"].diff(1)
 
+    # ── Nuevas features: recesión, condiciones financieras, apalancamiento, sentimiento ──
+    # recession (JHDUSRGDPBR, mensual binario, ffill a W-FRI): diff(4) ≈ cambio mensual
+    if "recession" in df.columns:
+        df["recession_diff"] = df["recession"].diff(4)
+
+    # yield_curve_diff: cambio mensual del spread 10Y-3M (ya calculado como Term_Spread_10_3m)
+    if "Term_Spread_10_3m" in df.columns:
+        df["yield_curve_diff"] = df["Term_Spread_10_3m"].diff(4)
+
+    # financial_conditions (NFCI, nativo semanal): cambio semanal
+    if "financial_conditions" in df.columns:
+        df["financial_conditions_diff"] = df["financial_conditions"].diff(1)
+
+    # leverage (NFCILEVERAGE, nativo semanal): cambio semanal
+    if "leverage" in df.columns:
+        df["leverage_diff"] = df["leverage"].diff(1)
+
+    # sentiment (UMCSENT, mensual, ffill a W-FRI): diff(4) ≈ cambio mensual
+    if "sentiment" in df.columns:
+        df["sentiment_diff"] = df["sentiment"].diff(4)
+
+    # empleo_diff: cambio mensual del desempleo (misma ventana que Unemp_Chg)
+    if "Unemployment" in df.columns:
+        df["empleo_diff"] = df["Unemployment"].diff(4)
+
+    # inflacion_diff: cambio mensual de la tasa de inflación interanual (CPI_YoY ya calculado)
+    if "CPI_YoY" in df.columns:
+        df["inflacion_diff"] = df["CPI_YoY"].diff(4)
+
     df.to_csv(f"{DATA_DIR}/fred_macro.csv")
     feature_list = list(df.columns)
     print(f"\n  -> {df.shape} guardadas en {DATA_DIR}/fred_macro.csv")

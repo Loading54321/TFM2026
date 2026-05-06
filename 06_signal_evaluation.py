@@ -209,6 +209,86 @@ def hit_rate(preds: pd.DataFrame) -> pd.Series:
     return pd.Series(records, name="hit_rate")
 
 
+# ── Precision@K y seleccion de longs / shorts ────────────────────────────────
+
+def precision_at_k(preds: pd.DataFrame, k: int = 3) -> pd.DataFrame:
+    """
+    Precision@K semanal para los picks de largo y corto.
+
+    Por cada semana t con N ETFs disponibles:
+      Long  picks : top-k por predicted_return  (mejor predichos)
+      Short picks : bottom-k por predicted_return (peor predichos)
+      Real top-k  : top-k por target real esa semana
+      Real bot-k  : bottom-k por target real esa semana
+
+    Metricas por semana:
+      long_precision   = |long_picks ∩ real_top-k| / k
+                         Referencia aleatoria: k/N  (≈ 27% con N=11, k=3)
+      short_precision  = |short_picks ∩ real_bot-k| / k
+      long_hit_rate    = % de picks long con target > 0  (exceso vs SPY positivo)
+      short_hit_rate   = % de picks short con target < 0 (exceso vs SPY negativo)
+      long_mean_ret    = retorno medio real de los k picks long esa semana
+      short_mean_ret   = retorno medio real de los k picks short esa semana
+      spread           = long_mean_ret - short_mean_ret  (>0 = modelo discrimina)
+    """
+    records = []
+    for date, group in preds.groupby("date"):
+        g = group.dropna(subset=["predicted_return", "target"])
+        n = len(g)
+        if n < k * 2:
+            continue
+
+        long_picks  = set(g.nsmallest(k, "rank")["etf"])   # rank 1..k
+        short_picks = set(g.nlargest(k, "rank")["etf"])    # rank N-k+1..N
+
+        real_top = set(g.nlargest(k, "target")["etf"])     # k mejores retornos reales
+        real_bot = set(g.nsmallest(k, "target")["etf"])    # k peores retornos reales
+
+        long_targets  = g[g["etf"].isin(long_picks)]["target"]
+        short_targets = g[g["etf"].isin(short_picks)]["target"]
+
+        records.append({
+            "date"           : date,
+            "long_precision" : len(long_picks  & real_top) / k,
+            "short_precision": len(short_picks & real_bot) / k,
+            "long_hit_rate"  : float((long_targets  > 0).mean()),
+            "short_hit_rate" : float((short_targets < 0).mean()),
+            "long_mean_ret"  : float(long_targets.mean()),
+            "short_mean_ret" : float(short_targets.mean()),
+            "spread"         : float(long_targets.mean() - short_targets.mean()),
+            "n_etfs"         : n,
+        })
+
+    return pd.DataFrame(records).set_index("date") if records else pd.DataFrame()
+
+
+def selection_summary(acc: pd.DataFrame, label: str, k: int = 3) -> dict:
+    """
+    Agrega las metricas semanales de precision_at_k en un resumen por modelo.
+
+    Referencia aleatoria (N=11, k=3):
+      Precision@3 esperada = 3/11 = 27.3%
+      Long / Short hit rate = 50.0%
+      Spread esperado       = 0.0%
+    """
+    if acc.empty:
+        return {}
+    n_etfs    = int(acc["n_etfs"].median())
+    rand_base = k / n_etfs
+    return {
+        "Model"           : label,
+        f"Prec@{k} Long"  : f"{acc['long_precision'].mean():.1%}",
+        f"Prec@{k} Short" : f"{acc['short_precision'].mean():.1%}",
+        "Baseline (rand)" : f"{rand_base:.1%}",
+        "Long HR"         : f"{acc['long_hit_rate'].mean():.1%}",
+        "Short HR"        : f"{acc['short_hit_rate'].mean():.1%}",
+        "Long ret"        : f"{acc['long_mean_ret'].mean():.3%}",
+        "Short ret"       : f"{acc['short_mean_ret'].mean():.3%}",
+        "L/S Spread"      : f"{acc['spread'].mean():.3%}",
+        "N weeks"         : len(acc),
+    }
+
+
 # ── Visualizacion ─────────────────────────────────────────────────────────────
 
 def plot_signal_evaluation(
@@ -301,16 +381,96 @@ def plot_signal_evaluation(
     print(f"  -> Grafico guardado: {save_path}")
 
 
+# ── Visualizacion: seleccion de longs / shorts ────────────────────────────────
+
+def plot_selection_accuracy(
+    acc_dict: dict,
+    k: int = 3,
+    save_path: str = f"{DATA_DIR}/signal_selection_accuracy.png",
+):
+    """
+    2 paneles por modelo:
+      Izquierda : Precision@K rolling 26 semanas (long y short) + baseline aleatorio
+      Derecha   : Long hit rate y Short hit rate rolling 26 semanas
+    """
+    if not acc_dict:
+        return
+
+    colors_long  = ["#2196f3", "#ff5722", "#4caf50"]
+    colors_short = ["#90caf9", "#ffccbc", "#a5d6a7"]
+    n_models     = len(acc_dict)
+    fig, axes    = plt.subplots(n_models, 2, figsize=(16, 5 * n_models), squeeze=False)
+
+    fig.suptitle(
+        f"Precision@{k} y Hit Rate de seleccion — Long / Short\n"
+        "[OOS]  |  rolling 26 semanas  |  baseline aleatorio = k/N (≈27% con 11 ETFs)",
+        fontsize=13, fontweight="bold",
+    )
+
+    for row, (label, acc) in enumerate(acc_dict.items()):
+        if acc.empty:
+            continue
+
+        cl = colors_long[row % len(colors_long)]
+        cs = colors_short[row % len(colors_short)]
+
+        # ── Panel izq: Precision@K rolling ───────────────────────────────────
+        ax = axes[row, 0]
+        roll_lp = acc["long_precision"].rolling(26).mean()
+        roll_sp = acc["short_precision"].rolling(26).mean()
+        n_etfs  = int(acc["n_etfs"].median())
+        baseline = k / n_etfs
+
+        ax.plot(roll_lp.index, roll_lp.values, lw=2, color=cl, label=f"Long Prec@{k}")
+        ax.plot(roll_sp.index, roll_sp.values, lw=2, color=cs, label=f"Short Prec@{k}", ls="--")
+        ax.axhline(baseline, color="gray", lw=1, ls=":", label=f"Aleatorio ({baseline:.0%})")
+        ax.set_title(f"{label} — Precision@{k} Rolling 26w")
+        ax.set_ylabel(f"Precision@{k}")
+        ax.yaxis.set_major_formatter(mtick.PercentFormatter(xmax=1, decimals=0))
+        ax.legend(fontsize=9)
+        ax.grid(True, alpha=0.3)
+        ax.set_ylim(0, 1)
+
+        # ── Panel dcha: Hit Rate rolling ──────────────────────────────────────
+        ax = axes[row, 1]
+        roll_lh = acc["long_hit_rate"].rolling(26).mean()
+        roll_sh = acc["short_hit_rate"].rolling(26).mean()
+
+        ax.plot(roll_lh.index, roll_lh.values, lw=2, color=cl, label="Long HR (ret>0)")
+        ax.plot(roll_sh.index, roll_sh.values, lw=2, color=cs, label="Short HR (ret<0)", ls="--")
+        ax.axhline(0.5, color="gray", lw=1, ls=":", label="Ref 50%")
+        ax.set_title(f"{label} — Hit Rate Long / Short Rolling 26w")
+        ax.set_ylabel("Hit Rate")
+        ax.yaxis.set_major_formatter(mtick.PercentFormatter(xmax=1, decimals=0))
+        ax.legend(fontsize=9)
+        ax.grid(True, alpha=0.3)
+        ax.set_ylim(0, 1)
+
+    plt.tight_layout()
+    plt.savefig(save_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"  -> Grafico seleccion guardado: {save_path}")
+
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 
-def evaluate_model(model_name: str, period: str = "OOS") -> tuple:
-    """Carga predicciones de un modelo y calcula IC, quintiles y hit rate."""
+def evaluate_model(model_name: str, period: str = "OOS", k: int = 3) -> tuple:
+    """
+    Carga predicciones de un modelo y calcula:
+      ic         : IC semanal (Spearman)
+      qdf        : retornos por quintil
+      summary    : resumen IC + hit rate
+      acc        : precision@k semanal (DataFrame)
+      sel_summary: resumen de seleccion long/short
+
+    Devuelve (ic, qdf, summary, acc, sel_summary).
+    """
     pred_path = f"{DATA_DIR}/predictions_{model_name}.csv"
     if not os.path.exists(pred_path):
         script = "04b_regime_walk_forward.py" if model_name == "RegimeLGBM" \
                  else "04_walk_forward_training.py"
         print(f"[!] No encontrado: {pred_path}. Ejecuta primero {script}")
-        return None, None, None
+        return None, None, None, None, None
 
     preds = pd.read_csv(pred_path, parse_dates=["date"])
 
@@ -325,18 +485,19 @@ def evaluate_model(model_name: str, period: str = "OOS") -> tuple:
 
     if preds.empty:
         print(f"  [!] Sin datos para periodo {period}")
-        return None, None, None
+        return None, None, None, None, None
 
-    ic     = compute_ic(preds)
-    qdf    = quantile_returns(preds)
-    hr     = hit_rate(preds)
+    ic  = compute_ic(preds)
+    qdf = quantile_returns(preds)
+    hr  = hit_rate(preds)
+    acc = precision_at_k(preds, k=k)
 
-    # Resumen estadistico
     summary = ic_summary(ic, label)
-    hr_mean = hr.mean()
-    summary["Hit Rate (dir)"] = f"{hr_mean:.1%}"
+    summary["Hit Rate (dir)"] = f"{hr.mean():.1%}"
 
-    return ic, qdf, summary
+    sel_summary = selection_summary(acc, label, k=k)
+
+    return ic, qdf, summary, acc, sel_summary
 
 
 if __name__ == "__main__":
@@ -344,12 +505,14 @@ if __name__ == "__main__":
     print("  EVALUACION DE SENALES — IC Analysis (Jansen 2020, cap. 12)")
     print("=" * 65 + "\n")
 
-    # Modelos a evaluar: RF global, LGBM global y LGBM por regimen HMM
+    K           = 3   # top-K longs, bottom-K shorts (alineado con TOP_N en config.py)
     model_names = ["LightGBM", "RandomForest", "RegimeLGBM"]
 
     ic_dict       = {}
     quintile_dict = {}
+    acc_dict      = {}
     summaries     = []
+    sel_summaries = []
 
     for model_name in model_names:
         pred_path = f"{DATA_DIR}/predictions_{model_name}.csv"
@@ -358,13 +521,18 @@ if __name__ == "__main__":
             continue
 
         print(f"\n[{model_name}] — OOS {OOS_START[:4]}–{OOS_END[:4]}")
-        ic, qdf, summary = evaluate_model(model_name, period="OOS")
+        ic, qdf, summary, acc, sel_summary = evaluate_model(
+            model_name, period="OOS", k=K
+        )
         if ic is None:
             continue
 
         ic_dict[model_name]       = ic
         quintile_dict[model_name] = qdf
+        acc_dict[model_name]      = acc
         summaries.append(summary)
+        if sel_summary:
+            sel_summaries.append(sel_summary)
 
         # IC por regimen (detecta columna automaticamente)
         preds_full = pd.read_csv(pred_path, parse_dates=["date"])
@@ -387,9 +555,17 @@ if __name__ == "__main__":
             qdf.to_csv(q_out, index=False)
             print(f"  Quintiles guardados: {q_out}")
 
-    # Tabla resumen
+        # Guardar precision@k semanal
+        if acc is not None and not acc.empty:
+            acc_out = f"{DATA_DIR}/signal_selection_accuracy_{model_name}.csv"
+            acc.to_csv(acc_out)
+            print(f"  Precision@{K} guardado: {acc_out}")
+
+    # ── Tabla resumen IC ──────────────────────────────────────────────────────
     if summaries:
         print("\n" + "=" * 65)
+        print("  RESUMEN IC / HIT RATE")
+        print("=" * 65)
         summary_df = pd.DataFrame(summaries).set_index("Model")
         print(summary_df.to_string())
         print("=" * 65)
@@ -399,12 +575,35 @@ if __name__ == "__main__":
         print("  ICIR    > 0.50  -> IC consistente a lo largo del tiempo")
         print("  Hit Rate > 55%  -> el signo de la prediccion acierta con frecuencia")
 
-    # Grafico comparativo (todos los modelos disponibles)
+    # ── Tabla resumen Precision@K ─────────────────────────────────────────────
+    if sel_summaries:
+        print("\n" + "=" * 75)
+        print(f"  PRECISION@{K} — CALIDAD DE SELECCION LONG / SHORT")
+        print("=" * 75)
+        sel_df = pd.DataFrame(sel_summaries).set_index("Model")
+        print(sel_df.to_string())
+        print("=" * 75)
+        print(f"\nInterpretacion Precision@{K} (con {K} picks sobre ~11 ETFs):")
+        print(f"  Baseline aleatorio  : {K}/11 = {K/11:.1%}  (sin modelo)")
+        print(f"  Prec@{K} Long > 35% : el modelo selecciona bien los ganadores")
+        print(f"  Prec@{K} Short > 35%: el modelo selecciona bien los perdedores")
+        print(f"  Long HR  > 55%      : la mayoria de picks long suben (exceso>0)")
+        print(f"  Short HR > 55%      : la mayoria de picks short bajan (exceso<0)")
+        print(f"  L/S Spread > 0      : longs reales superan a shorts reales en promedio")
+
+    # ── Graficos ──────────────────────────────────────────────────────────────
     if ic_dict:
         plot_signal_evaluation(
             ic_dict,
             quintile_dict,
             save_path=f"{DATA_DIR}/signal_evaluation_plot.png",
+        )
+
+    if acc_dict:
+        plot_selection_accuracy(
+            acc_dict,
+            k=K,
+            save_path=f"{DATA_DIR}/signal_selection_accuracy.png",
         )
 
     print("\n[OK] Evaluacion de senales completada.")

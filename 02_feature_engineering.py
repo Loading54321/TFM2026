@@ -30,16 +30,16 @@ REGLA ANTI-LEAKAGE
 FEATURES — tres bloques
 ───────────────────────
   1. ETF-específicas (varían por ETF y por fecha):
-       ret_1w, ret_3w, ret_4w, ret_7w, ret_8w, ret_13w, ret_26w, ret_52w,
+       momentum_1w, momentum_3w, momentum_4w, momentum_7w, momentum_8w, momentum_13w, momentum_26w, momentum_52w,
        momentum_52_4 (retorno acumulado 52w excluyendo últimas 4w),
        vol_3w, vol_7w, vol_13w, vol_26w, vol_52w (volatilidad rolling anualizada)
-       excess_ret_1w  = ret_1w  - spy_ret_1w   (rendimiento relativo 1w)
-       excess_ret_13w = ret_13w - spy_ret_13w  (rendimiento relativo 13w ≈ trim.)
-       excess_ret_52w = ret_52w - spy_ret_52w  (rendimiento relativo 52w)
+       excess_ret_1w  = momentum_1w  - spy_ret_1w   (rendimiento relativo 1w)
+       excess_ret_13w = momentum_13w - spy_ret_13w  (rendimiento relativo 13w ≈ trim.)
+       excess_ret_52w = momentum_52w - spy_ret_52w  (rendimiento relativo 52w)
 
   2. Cross-seccionales por fecha (rank dentro del corte transversal):
-       ret_1w_rank, ret_3w_rank, ret_4w_rank, ret_7w_rank, ret_8w_rank,
-       ret_13w_rank, ret_26w_rank, ret_52w_rank,
+       momentum_1w_rank, momentum_3w_rank, momentum_4w_rank, momentum_7w_rank, momentum_8w_rank,
+       momentum_13w_rank, momentum_26w_rank, momentum_52w_rank,
        vol_3w_rank, vol_7w_rank, vol_13w_rank, vol_26w_rank, vol_52w_rank
        [0=peor, 1=mejor dentro del grupo de ETFs esa semana]
 
@@ -54,7 +54,13 @@ FEATURES — tres bloques
              JGB10Y, JGB10Y_Chg, US_JP_Spread (bono Japón 10Y + spread vs T10),
              IG_OAS, IG_OAS_Chg (ICE BofA IG credit spread),
              ISM, ISM_Chg (Chicago Fed NAI, proxy PMI manufacturero),
-             Oil_ret_1w, Oil_ret_4w (WTI vía FRED DCOILWTICO)
+             Oil_ret_1w, Oil_ret_4w (WTI vía FRED DCOILWTICO),
+             recession (NBER binario, nivel),
+             financial_conditions (NFCI semanal, nivel),
+             leverage (NFCI subíndice apalancamiento semanal, nivel),
+             sentiment (UMich Consumer Sentiment mensual, nivel),
+             recession_diff, yield_curve_diff, financial_conditions_diff,
+             leverage_diff, sentiment_diff, empleo_diff, inflacion_diff
        Fama-French 5: Mkt-RF, SMB, HML, RMW, CMA, RF
 """
 
@@ -149,15 +155,15 @@ def _rsi(series: pd.Series, period: int) -> pd.Series:
 def compute_etf_features(prices: pd.DataFrame, sector_etfs: list) -> pd.DataFrame:
     """
     Genera features de momentum, volatilidad y RSI por ETF a frecuencia semanal:
-      ret_1w        retorno 1 semana
-      ret_3w        retorno acumulado 3 semanas
-      ret_4w        retorno acumulado 4 semanas (≈ 1 mes)
-      ret_7w        retorno acumulado 7 semanas
-      ret_8w        retorno acumulado 8 semanas (≈ 2 meses)
-      ret_13w       retorno acumulado 13 semanas (≈ 1 trimestre)
-      ret_26w       retorno acumulado 26 semanas (≈ 6 meses)
-      ret_52w       retorno acumulado 52 semanas (≈ 1 año)
-      momentum_52_4 ret_52w − ret_4w  (momentum anual excluyendo el último mes)
+      momentum_1w   retorno 1 semana
+      momentum_3w   retorno acumulado 3 semanas
+      momentum_4w   retorno acumulado 4 semanas (≈ 1 mes)
+      momentum_7w   retorno acumulado 7 semanas
+      momentum_8w   retorno acumulado 8 semanas (≈ 2 meses)
+      momentum_13w  retorno acumulado 13 semanas (≈ 1 trimestre)
+      momentum_26w  retorno acumulado 26 semanas (≈ 6 meses)
+      momentum_52w  retorno acumulado 52 semanas (≈ 1 año)
+      momentum_52_4 momentum_52w − momentum_4w  (momentum anual excluyendo el último mes)
       vol_3w        volatilidad rolling anualizada, ventana 3 semanas
       vol_7w        volatilidad rolling anualizada, ventana 7 semanas
       vol_13w       volatilidad rolling anualizada, ventana 13 semanas
@@ -190,14 +196,14 @@ def compute_etf_features(prices: pd.DataFrame, sector_etfs: list) -> pd.DataFram
         d = pd.DataFrame(index=r.index)
         d["etf"]           = etf
         d["return"]        = r
-        d["ret_1w"]        = r
-        d["ret_3w"]        = r.rolling(3).sum()
-        d["ret_4w"]        = r.rolling(4).sum()
-        d["ret_7w"]        = r.rolling(7).sum()
-        d["ret_8w"]        = r.rolling(8).sum()
-        d["ret_13w"]       = r.rolling(13).sum()
-        d["ret_26w"]       = r.rolling(26).sum()
-        d["ret_52w"]       = r.rolling(52).sum()
+        d["momentum_1w"]   = r
+        d["momentum_3w"]   = r.rolling(3).sum()
+        d["momentum_4w"]   = r.rolling(4).sum()
+        d["momentum_7w"]   = r.rolling(7).sum()
+        d["momentum_8w"]   = r.rolling(8).sum()
+        d["momentum_13w"]  = r.rolling(13).sum()
+        d["momentum_26w"]  = r.rolling(26).sum()
+        d["momentum_52w"]  = r.rolling(52).sum()
         d["momentum_52_4"] = r.rolling(52).sum() - r.rolling(4).sum()
         d["vol_3w"]        = r.rolling(3).std()  * np.sqrt(52)
         d["vol_7w"]        = r.rolling(7).std()  * np.sqrt(52)
@@ -216,8 +222,8 @@ def compute_etf_features(prices: pd.DataFrame, sector_etfs: list) -> pd.DataFram
     panel.reset_index(inplace=True)
 
     # ffill de gaps puntuales por ETF (festivos o datos ausentes esporádicos)
-    feat_cols = ["ret_1w", "ret_3w", "ret_4w", "ret_7w", "ret_8w", "ret_13w",
-                 "ret_26w", "ret_52w", "momentum_52_4",
+    feat_cols = ["momentum_1w", "momentum_3w", "momentum_4w", "momentum_7w", "momentum_8w", "momentum_13w",
+                 "momentum_26w", "momentum_52w", "momentum_52_4",
                  "vol_3w", "vol_7w", "vol_13w", "vol_26w", "vol_52w",
                  "rsi_9w", "rsi_14w", "rsi_26w",
                  "beta_52w", "beta_26w"]
@@ -240,8 +246,8 @@ def add_cross_sectional_features(panel: pd.DataFrame) -> pd.DataFrame:
       rank alto (≈1) → ETF con mayor RSI relativo (más sobrecomprado en el grupo)
       rank bajo (≈0) → ETF con menor RSI relativo (más sobrevendido en el grupo)
     """
-    for col in ["ret_1w", "ret_3w", "ret_4w", "ret_7w", "ret_8w", "ret_13w",
-                "ret_26w", "ret_52w",
+    for col in ["momentum_1w", "momentum_3w", "momentum_4w", "momentum_7w", "momentum_8w", "momentum_13w",
+                "momentum_26w", "momentum_52w",
                 "vol_3w", "vol_7w", "vol_13w", "vol_26w", "vol_52w",
                 "rsi_9w", "rsi_14w", "rsi_26w",
                 "beta_52w", "beta_26w"]:
@@ -263,9 +269,9 @@ def add_excess_return_features(
 ) -> pd.DataFrame:
     """
     Añade retorno del ETF MENOS retorno del SPY en el mismo período:
-      excess_ret_1w  = ret_1w  - SPY_ret_1w   al cierre de la semana t
-      excess_ret_13w = ret_13w - SPY_ret_13w  últimas 13 semanas hasta t
-      excess_ret_52w = ret_52w - SPY_ret_52w  últimas 52 semanas hasta t
+      excess_ret_1w  = momentum_1w  - SPY_ret_1w   al cierre de la semana t
+      excess_ret_13w = momentum_13w - SPY_ret_13w  últimas 13 semanas hasta t
+      excess_ret_52w = momentum_52w - SPY_ret_52w  últimas 52 semanas hasta t
 
     Miden si el sector ha estado superando o rezagándose del mercado.
     """
@@ -278,9 +284,9 @@ def add_excess_return_features(
     panel = panel.merge(_series_to_df(spy_ret_13w, "_spy13w"), on="date", how="left")
     panel = panel.merge(_series_to_df(spy_ret_52w, "_spy52w"), on="date", how="left")
 
-    panel["excess_ret_1w"]  = panel["ret_1w"]  - panel["_spy1w"]
-    panel["excess_ret_13w"] = panel["ret_13w"] - panel["_spy13w"]
-    panel["excess_ret_52w"] = panel["ret_52w"] - panel["_spy52w"]
+    panel["excess_ret_1w"]  = panel["momentum_1w"]  - panel["_spy1w"]
+    panel["excess_ret_13w"] = panel["momentum_13w"] - panel["_spy13w"]
+    panel["excess_ret_52w"] = panel["momentum_52w"] - panel["_spy52w"]
 
     panel.drop(columns=["_spy1w", "_spy13w", "_spy52w"], inplace=True)
     return panel
@@ -391,13 +397,13 @@ def build_feature_matrix(sector_etfs: list = None) -> pd.DataFrame:
     print(f"[FE] ETFs incluidos ({len(sector_etfs)}): {sector_etfs}")
     print(f"[FE] Target: exceso de retorno ETF vs SPY en t+1 (semanal)")
 
-    _etf_base  = {"ret_1w","ret_3w","ret_4w","ret_7w","ret_8w","ret_13w","ret_26w","ret_52w",
+    _etf_base  = {"momentum_1w","momentum_3w","momentum_4w","momentum_7w","momentum_8w","momentum_13w","momentum_26w","momentum_52w",
                   "momentum_52_4",
                   "vol_3w","vol_7w","vol_13w","vol_26w","vol_52w",
                   "rsi_9w","rsi_14w","rsi_26w",
                   "beta_52w","beta_26w"}
-    _etf_rank  = {f"{c}_rank" for c in ["ret_1w","ret_3w","ret_4w","ret_7w","ret_8w",
-                                         "ret_13w","ret_26w","ret_52w",
+    _etf_rank  = {f"{c}_rank" for c in ["momentum_1w","momentum_3w","momentum_4w","momentum_7w","momentum_8w",
+                                         "momentum_13w","momentum_26w","momentum_52w",
                                          "vol_3w","vol_7w","vol_13w","vol_26w","vol_52w",
                                          "rsi_9w","rsi_14w","rsi_26w",
                                          "beta_52w","beta_26w"]}
@@ -413,6 +419,10 @@ def build_feature_matrix(sector_etfs: list = None) -> pd.DataFrame:
         "IG_OAS","IG_OAS_Chg",
         "ISM","ISM_Chg",
         "Oil_ret_1w","Oil_ret_4w",
+        # Recesión, condiciones financieras, apalancamiento y sentimiento
+        "recession","financial_conditions","leverage","sentiment",
+        "recession_diff","yield_curve_diff","financial_conditions_diff",
+        "leverage_diff","sentiment_diff","empleo_diff","inflacion_diff",
     }
 
     feat_set    = set(feature_cols)

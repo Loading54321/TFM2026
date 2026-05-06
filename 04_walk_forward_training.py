@@ -257,7 +257,7 @@ def _build_hmm(data_dir: str) -> tuple:
     print(f"[HMM] Medias aprendidas (IS):")
     for hmm_s, econ_l in sorted(mapping.items(), key=lambda x: x[1]):
         mu = model.means_[hmm_s]
-        print(f"  {REGIME_NAMES[econ_l]:10s}  ret_13w={mu[0]:>8.4f}  vol_13w={mu[1]:>8.4f}")
+        print(f"  {REGIME_NAMES[econ_l]:10s}  momentum_13w={mu[0]:>8.4f}  vol_13w={mu[1]:>8.4f}")
 
     return model, mapping, spy_df, is_regime_by_date
 

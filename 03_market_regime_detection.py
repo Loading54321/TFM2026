@@ -66,7 +66,7 @@ def _plot_regimes(prices: pd.DataFrame, regime: pd.Series, save_path: str):
     patches.append(plt.Line2D([0], [0], color="black", lw=1.5, label="SPY"))
     ax.legend(handles=patches, loc="upper left", fontsize=10)
     ax.set_title(
-        "Regimenes de mercado — Gaussian HMM  (ret_13w + vol_13w)  |  "
+        "Regimenes de mercado — Gaussian HMM  (momentum_13w + vol_13w)  |  "
         "Train IS-only · Visualizacion: Viterbi global",
         fontsize=12, fontweight="bold",
     )
@@ -132,7 +132,7 @@ def main():
 
     # Diagnostico de parametros aprendidos
     print("\n[HMM] Parametros aprendidos (IS):")
-    print(f"  {'Regimen':10s}  {'ret_13w':>8s}  {'vol_13w':>8s}  {'std_r13w':>10s}  {'std_v13w':>10s}")
+    print(f"  {'Regimen':10s}  {'momentum_13w':>12s}  {'vol_13w':>8s}  {'std_r13w':>10s}  {'std_v13w':>10s}")
     for hmm_s, econ_l in sorted(mapping.items(), key=lambda x: x[1]):
         mu   = model.means_[hmm_s]
         cov  = model.covars_[hmm_s]

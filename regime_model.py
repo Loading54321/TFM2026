@@ -4,7 +4,7 @@ regime_model.py
 # v2 final — Abril 2026
 Funciones compartidas para la deteccion de regimenes con Gaussian HMM.
 
-Frecuencia: semanal (W-FRI). Las observaciones son ret_13w y vol_13w,
+Frecuencia: semanal (W-FRI). Las observaciones son momentum_13w y vol_13w,
 equivalente semanal a ret_3m/vol_3m (13 semanas ≈ 1 trimestre).
 
 Importadas por:
@@ -20,7 +20,7 @@ VALIDACION CONTRA LITERATURA
     time series" — stacyzheng.github.io/files/hmm.pdf
     -> El paper usa GaussianHMM con retornos como observaciones y
        covariance_type='full'. Esta implementacion CUMPLE y MEJORA:
-       usa (ret_13w, vol_13w) en lugar de solo retornos, separando mejor
+       usa (momentum_13w, vol_13w) en lugar de solo retornos, separando mejor
        los estados de alta y baja volatilidad.
 
 
@@ -43,27 +43,27 @@ VALIDACION CONTRA LITERATURA
        canonico para series financieras con persistencia de estados.
 
 ─────────────────────────────────────────────────────────────────────────────
-ELECCION DE FEATURES — por que (ret_13w, vol_13w):
+ELECCION DE FEATURES — por que (momentum_13w, vol_13w):
 ─────────────────────────────────────────────────────────────────────────────
 
-  Problema con (ret_1w, ret_13w):
-    - ret_13w ~ suma de ret_1w[t]...ret_1w[t-12]  -> correlacion alta
+  Problema con (momentum_1w, momentum_13w):
+    - momentum_13w ~ suma de momentum_1w[t]...momentum_1w[t-12]  -> correlacion alta
     - Usar covariance_type='diag' con features correladas es matematicamente
       incorrecto: el modelo asume independencia donde no la hay, y la EM
       converge a minimos locales donde Bear captura demasiados periodos.
 
   Solucion — dos features aproximadamente ortogonales:
-    ret_13w  retorno acumulado 13 semanas del SPY  (senial de DIRECCION)
-    vol_13w  volatilidad realizada 13w, anualizada (senial de RIESGO)
+    momentum_13w  retorno acumulado 13 semanas del SPY  (senial de DIRECCION)
+    vol_13w       volatilidad realizada 13w, anualizada (senial de RIESGO)
     -> Alineado con PyQuantLab (2025): "returns + volatility" como
        observaciones standard para HMM de regimenes financieros.
     -> 13 semanas ≈ 3 meses: la escala de retorno compuesto es identica,
        por lo que las medias iniciales se mantienen iguales al caso mensual.
 
-  Separacion en el espacio (ret_13w, vol_13w):
-    Bear:    ret_13w << 0,  vol_13w >> alto  (caidas violentas + panico)
-    Ranging: ret_13w ~ 0,  vol_13w medio    (lateralizacion)
-    Bull:    ret_13w > 0,  vol_13w bajo     (tendencia sostenida + calma)
+  Separacion en el espacio (momentum_13w, vol_13w):
+    Bear:    momentum_13w << 0,  vol_13w >> alto  (caidas violentas + panico)
+    Ranging: momentum_13w ~ 0,  vol_13w medio    (lateralizacion)
+    Bull:    momentum_13w > 0,  vol_13w bajo     (tendencia sostenida + calma)
 
   La volatilidad es el discriminante mas potente: Bear tiene vol 3-4x
   mayor que Bull, mientras que en el espacio de retornos solos los tres
@@ -73,7 +73,7 @@ ELECCION DE FEATURES — por que (ret_13w, vol_13w):
   real entre retorno y volatilidad (efecto palanca / leverage effect).
 
 ─────────────────────────────────────────────────────────────────────────────
-REGIMENES: 0=Bear | 1=Ranging | 2=Bull  (ordenados por ret_13w medio)
+REGIMENES: 0=Bear | 1=Ranging | 2=Bull  (ordenados por momentum_13w medio)
 
 DECODIFICACION:
   IS  -> Viterbi global (secuencia optima, sin lookahead fuera del IS)
@@ -95,7 +95,7 @@ REGIME_NAMES  = {0: "Bear", 1: "Ranging", 2: "Bull"}
 REGIME_COLORS = {0: "#e63946", 1: "#adb5bd", 2: "#2dc653"}
 
 # Nombres de las dos observaciones del HMM (usados en diagnosticos y seleccion)
-OBS_COLS = ["ret_13w", "vol_13w"]
+OBS_COLS = ["momentum_13w", "vol_13w"]
 
 
 # ── 1. Features ───────────────────────────────────────────────────────────────
@@ -104,11 +104,11 @@ def load_spy_features(data_dir: str = DATA_DIR) -> pd.DataFrame:
     """
     Carga precios semanales del SPY (W-FRI) y calcula las dos observaciones del HMM:
 
-      ret_13w  retorno acumulado 13 semanas  pct_change(13)
-               -> capta la DIRECCION/tendencia trimestral; equivalente a ret_3m mensual
+      momentum_13w  retorno acumulado 13 semanas  pct_change(13)
+                    -> capta la DIRECCION/tendencia trimestral; equivalente a ret_3m mensual
 
-      vol_13w  volatilidad realizada 13 semanas, anualizada
-               std(ret_1w ultimas 13 semanas) * sqrt(52)
+      vol_13w       volatilidad realizada 13 semanas, anualizada
+                    std(momentum_1w ultimas 13 semanas) * sqrt(52)
                -> capta el RIESGO / nivel de panico del mercado
 
     Las dos features son aproximadamente ortogonales: la correlacion entre
@@ -123,12 +123,12 @@ def load_spy_features(data_dir: str = DATA_DIR) -> pd.DataFrame:
     prices.index.name = "date"
     prices.sort_index(inplace=True)
 
-    spy     = prices["SPY"]
-    ret_1w  = spy.pct_change()
-    ret_13w = spy.pct_change(13)
-    vol_13w = ret_1w.rolling(13).std() * np.sqrt(52)   # volatilidad anualizada
+    spy          = prices["SPY"]
+    momentum_1w  = spy.pct_change()
+    momentum_13w = spy.pct_change(13)
+    vol_13w      = momentum_1w.rolling(13).std() * np.sqrt(52)   # volatilidad anualizada
 
-    df = pd.DataFrame({"ret_13w": ret_13w, "vol_13w": vol_13w}, index=spy.index)
+    df = pd.DataFrame({"momentum_13w": momentum_13w, "vol_13w": vol_13w}, index=spy.index)
     df.dropna(inplace=True)
     return df
 
@@ -150,13 +150,13 @@ def fit_hmm(X_train: np.ndarray) -> GaussianHMM:
       los valores economicos que definimos a continuacion.  Evita minimos
       locales donde todos los estados colapsan al mismo cluster.
 
-    Inicializacion en el espacio (ret_13w, vol_13w):
+    Inicializacion en el espacio (momentum_13w, vol_13w):
       Valores en decimal; vol_13w es anualizada (ej. 0.40 = 40% vol anual).
-      ret_13w ≈ ret_3m en escala de retorno compuesto (13 semanas ≈ 3 meses).
+      momentum_13w ≈ ret_3m en escala de retorno compuesto (13 semanas ≈ 3 meses).
 
-      Bear:    ret_13w ~ -18%,  vol_13w ~ 42%  (crisis: caida + panico)
-      Ranging: ret_13w ~  +2%,  vol_13w ~ 18%  (mercado lateral)
-      Bull:    ret_13w ~  +8%,  vol_13w ~ 12%  (tendencia alcista tranquila)
+      Bear:    momentum_13w ~ -18%,  vol_13w ~ 42%  (crisis: caida + panico)
+      Ranging: momentum_13w ~  +2%,  vol_13w ~ 18%  (mercado lateral)
+      Bull:    momentum_13w ~  +8%,  vol_13w ~ 12%  (tendencia alcista tranquila)
     """
     model = GaussianHMM(
         n_components=N_STATES,
@@ -178,8 +178,8 @@ def fit_hmm(X_train: np.ndarray) -> GaussianHMM:
         [0.04, 0.10, 0.86],   # desde Bull   -> mayor prob de seguir Bull
     ])
 
-    # Medias: [ret_13w, vol_13w]
-    # ret_13w tiene la misma escala que ret_3m (13 semanas ≈ 3 meses en retorno compuesto)
+    # Medias: [momentum_13w, vol_13w]
+    # momentum_13w tiene la misma escala que ret_3m (13 semanas ≈ 3 meses en retorno compuesto)
     # vol_13w es anualizada: misma escala que vol_3m mensual anualizada
     model.means_ = np.array([
         [-0.18,  0.42],   # Bear
@@ -203,13 +203,13 @@ def fit_hmm(X_train: np.ndarray) -> GaussianHMM:
 def label_mapping(model: GaussianHMM) -> dict:
     """
     Reasigna indices HMM (arbitrarios tras EM) a etiquetas economicas
-    ordenando por la media de ret_13w (primera feature):
-      menor ret_13w -> Bear   (0)
-      medio         -> Ranging (1)
-      mayor         -> Bull   (2)
+    ordenando por la media de momentum_13w (primera feature):
+      menor momentum_13w -> Bear   (0)
+      medio              -> Ranging (1)
+      mayor              -> Bull   (2)
     Devuelve {indice_hmm: etiqueta_economica}.
     """
-    sorted_states = np.argsort(model.means_[:, 0])   # ordena por ret_13w
+    sorted_states = np.argsort(model.means_[:, 0])   # ordena por momentum_13w
     return {int(hmm_s): int(econ_l) for econ_l, hmm_s in enumerate(sorted_states)}
 
 

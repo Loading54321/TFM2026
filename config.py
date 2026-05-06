@@ -193,6 +193,11 @@ FRED_SERIES = {
     # ── Crédito corporativo y actividad manufacturera ─────────────────────────
     "BAMLC0A0CM"        : "IG_OAS",        # ICE BofA IG OAS (crédito grado inversión, diario, desde 1997)
     "CFNAI"             : "ISM",           # Chicago Fed NAI (compuesto 85 indicadores, proxy PMI, mensual)
+    # ── Ciclo económico / recesiones / condiciones financieras ───────────────
+    "JHDUSRGDPBR"       : "recession",            # NBER recession indicator (binario 0/1, mensual)
+    "NFCI"              : "financial_conditions",  # Chicago Fed NFCI (semanal)
+    "NFCILEVERAGE"      : "leverage",              # NFCI subíndice de apalancamiento (semanal)
+    "UMCSENT"           : "sentiment",             # UMich Consumer Sentiment (mensual)
 }
 
 
