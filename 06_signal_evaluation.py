@@ -2,36 +2,36 @@
 06_signal_evaluation.py
 =======================
 # v2 final — Abril 2026
-Evaluacion de la calidad de las senales de prediccion del modelo.
+Evaluación de la calidad de las señales de predicción del modelo.
 Frecuencia de predicciones: semanal (W-FRI).
 
 Basado en el notebook de Stefan Jansen:
   github.com/stefan-jansen/machine-learning-for-trading/blob/main/
   12_gradient_boosting_machines/06_evaluate_trading_signals.ipynb
 
-Metricas implementadas (sin alphalens, puro pandas/scipy):
+Métricas implementadas (sin alphalens, puro pandas/scipy):
   1. IC global (Information Coefficient)
      Spearman rank-correlation entre predicted_return y target (retorno t+1).
-     IC > 0.05 se considera util en la practica; IC > 0.10 es excelente.
+     IC > 0.05 se considera útil en la práctica; IC > 0.10 es excelente.
 
   2. IC Rolling (ventana 52 semanas = 1 año)
-     Estabilidad temporal de la senial: un IC que decae sistematicamente
-     indica que el modelo pierde poder predictivo en el OOS reciente
+     Estabilidad temporal de la señal: un IC que decae sistemáticamente
+     indica que el modelo pierde poder predictivo en el OOS reciente.
 
-  3. IC por regimen de mercado
+  3. IC por régimen de mercado
      Mide si el modelo funciona mejor en Bull, Ranging o Bear.
-     Informacion util para ajustar la estrategia segun el ciclo.
+     Información útil para ajustar la estrategia según el ciclo.
 
-  4. Analisis por quintiles (quantile returns)
+  4. Análisis por quintiles (quantile returns)
      Divide los ETFs predichos en 5 grupos ordenados por predicted_return
-     y calcula el retorno medio de cada grupo. Una buena senial muestra
-     retornos monotonamente crecientes del Q1 (peor predicho) al Q5 (mejor).
+     y calcula el retorno medio de cada grupo. Una buena señal muestra
+     retornos monótonamente crecientes del Q1 (peor predicho) al Q5 (mejor).
 
-  5. Hit Rate (% de veces que el signo de la prediccion acierta)
+  5. Hit Rate (% de veces que el signo de la predicción acierta)
      Complementa el IC: un modelo puede tener IC bajo pero hit rate alto.
 
 Modelos evaluados:
-  LightGBM, RandomForest, RegimeLGBM (3 LGBM por regimen HMM)
+  LightGBM, RandomForest, RegimeLGBM (1 LGBM con régimen HMM como feature)
 
 Genera:
   data/signal_evaluation_IC_{model}.csv        IC semanal por modelo
@@ -61,11 +61,11 @@ def compute_ic(preds: pd.DataFrame) -> pd.Series:
     """
     IC semanal = Spearman(predicted_return, target) por fecha.
 
-    El IC mide la correlacion de rango entre la prediccion del modelo
-    y el retorno real de la semana siguiente. Valores tipicos en la literatura:
-      IC > 0.05  : senial debilmente util
-      IC > 0.10  : senial moderadamente util
-      IC > 0.15  : senial fuerte (raro en mercados eficientes)
+    El IC mide la correlación de rango entre la predicción del modelo
+    y el retorno real de la semana siguiente. Valores típicos en la literatura:
+      IC > 0.05  : señal débilmente útil
+      IC > 0.10  : señal moderadamente útil
+      IC > 0.15  : señal fuerte (raro en mercados eficientes)
 
     Referencia: Jansen (2020) cap. 12, Grinold & Kahn (2000) "Active Portfolio
     Management" — la Ley Fundamental de la Gestion Activa:
@@ -86,7 +86,7 @@ def compute_ic(preds: pd.DataFrame) -> pd.Series:
 
 def ic_summary(ic: pd.Series, label: str = "") -> dict:
     """
-    Resumen estadistico del IC: media, std, t-stat, hit-rate, ICIR.
+    Resumen estadístico del IC: media, std, t-stat, hit-rate, ICIR.
 
     ICIR (Information Coefficient Information Ratio):
       ICIR = mean(IC) / std(IC)
@@ -177,7 +177,7 @@ def quantile_returns(preds: pd.DataFrame, n_quantiles: int = 5) -> pd.DataFrame:
         if len(g) < n_quantiles:
             continue
         g = g.copy()
-        # rank(method='first') elimina empates -> qcut produce exactamente n_quantiles bins
+        # rank(method='first') elimina empates → qcut produce exactamente n_quantiles bins
         g["quintile"] = pd.qcut(
             g["predicted_return"].rank(method="first"),
             n_quantiles,
@@ -196,8 +196,8 @@ def quantile_returns(preds: pd.DataFrame, n_quantiles: int = 5) -> pd.DataFrame:
 
 def hit_rate(preds: pd.DataFrame) -> pd.Series:
     """
-    % de ETFs cuyo signo de prediccion coincide con el signo del retorno real.
-    Complementa el IC: hit rate > 55% con IC > 0 indica senial util y consistente.
+    % de ETFs cuyo signo de predicción coincide con el signo del retorno real.
+    Complementa el IC: hit rate > 55% con IC > 0 indica señal útil y consistente.
     """
     records = {}
     for date, group in preds.groupby("date"):
@@ -301,11 +301,11 @@ def plot_signal_evaluation(
       1. IC rolling 52 semanas por modelo
       2. IC semanal con banda ±1 std (rolling 52w)
       3. Retornos por quintil (Q1..Q5) — spread Q5-Q1
-      4. Distribucion del IC (histograma)
+      4. Distribución del IC (histograma)
     """
     fig, axes = plt.subplots(2, 2, figsize=(16, 10))
     fig.suptitle(
-        "Evaluacion de Senales — Information Coefficient y Analisis de Quintiles\n"
+        "Evaluación de Señales — Information Coefficient y Análisis de Quintiles\n"
         "[OOS 2020-2024]  |  frecuencia semanal",
         fontsize=13, fontweight="bold",
     )
@@ -317,7 +317,7 @@ def plot_signal_evaluation(
         ic_roll = ic.rolling(52).mean()
         ax.plot(ic_roll.index, ic_roll.values, label=label, lw=2, color=color)
     ax.axhline(0, color="black", lw=0.8, ls="--")
-    ax.axhline(0.05, color="gray", lw=0.6, ls=":", label="IC=0.05 (umbral util)")
+    ax.axhline(0.05, color="gray", lw=0.6, ls=":", label="IC=0.05 (umbral útil)")
     ax.set_title("IC Rolling 52 semanas (1 año)")
     ax.set_ylabel("IC (Spearman)")
     ax.legend(fontsize=8)
@@ -356,7 +356,7 @@ def plot_signal_evaluation(
     ax.set_xticks(x + width / 2)
     ax.set_xticklabels([f"Q{i+1}" for i in range(5)])
     ax.axhline(0, color="black", lw=0.8)
-    ax.set_title("Retorno Medio Real por Quintil de Prediccion\n(Q1=peor predicho, Q5=mejor)")
+    ax.set_title("Retorno Medio Real por Quintil de Predicción\n(Q1=peor predicho, Q5=mejor)")
     ax.set_ylabel("Retorno medio semanal (%)")
     ax.legend(fontsize=8)
     ax.yaxis.set_major_formatter(mtick.PercentFormatter(xmax=100, decimals=1))
@@ -369,7 +369,7 @@ def plot_signal_evaluation(
         ax.hist(ic_clean, bins=20, alpha=0.5, color=color, label=f"{label} (mean={ic_clean.mean():.3f})")
     ax.axvline(0, color="black", lw=1, ls="--")
     ax.axvline(0.05, color="gray", lw=0.8, ls=":", label="IC=0.05")
-    ax.set_title("Distribucion del IC Semanal")
+    ax.set_title("Distribución del IC Semanal")
     ax.set_xlabel("IC (Spearman)")
     ax.set_ylabel("Frecuencia")
     ax.legend(fontsize=8)
@@ -402,7 +402,7 @@ def plot_selection_accuracy(
     fig, axes    = plt.subplots(n_models, 2, figsize=(16, 5 * n_models), squeeze=False)
 
     fig.suptitle(
-        f"Precision@{k} y Hit Rate de seleccion — Long / Short\n"
+        f"Precision@{k} y Hit Rate de selección — Long / Short\n"
         "[OOS]  |  rolling 26 semanas  |  baseline aleatorio = k/N (≈27% con 11 ETFs)",
         fontsize=13, fontweight="bold",
     )
@@ -502,7 +502,7 @@ def evaluate_model(model_name: str, period: str = "OOS", k: int = 3) -> tuple:
 
 if __name__ == "__main__":
     print("\n" + "=" * 65)
-    print("  EVALUACION DE SENALES — IC Analysis (Jansen 2020, cap. 12)")
+    print("  EVALUACIÓN DE SEÑALES — IC Analysis (Jansen 2020, cap. 12)")
     print("=" * 65 + "\n")
 
     K           = 3   # top-K longs, bottom-K shorts (alineado con TOP_N en config.py)
@@ -569,26 +569,26 @@ if __name__ == "__main__":
         summary_df = pd.DataFrame(summaries).set_index("Model")
         print(summary_df.to_string())
         print("=" * 65)
-        print("\nInterpretacion del IC:")
-        print("  IC Mean > 0.05  -> senial debilmente util")
-        print("  IC Mean > 0.10  -> senial moderadamente util")
+        print("\nInterpretación del IC:")
+        print("  IC Mean > 0.05  -> señal débilmente útil")
+        print("  IC Mean > 0.10  -> señal moderadamente útil")
         print("  ICIR    > 0.50  -> IC consistente a lo largo del tiempo")
-        print("  Hit Rate > 55%  -> el signo de la prediccion acierta con frecuencia")
+        print("  Hit Rate > 55%  -> el signo de la predicción acierta con frecuencia")
 
     # ── Tabla resumen Precision@K ─────────────────────────────────────────────
     if sel_summaries:
         print("\n" + "=" * 75)
-        print(f"  PRECISION@{K} — CALIDAD DE SELECCION LONG / SHORT")
+        print(f"  PRECISION@{K} — CALIDAD DE SELECCIÓN LONG / SHORT")
         print("=" * 75)
         sel_df = pd.DataFrame(sel_summaries).set_index("Model")
         print(sel_df.to_string())
         print("=" * 75)
-        print(f"\nInterpretacion Precision@{K} (con {K} picks sobre ~11 ETFs):")
+        print(f"\nInterpretación Precision@{K} (con {K} picks sobre ~11 ETFs):")
         print(f"  Baseline aleatorio  : {K}/11 = {K/11:.1%}  (sin modelo)")
         print(f"  Prec@{K} Long > 35% : el modelo selecciona bien los ganadores")
         print(f"  Prec@{K} Short > 35%: el modelo selecciona bien los perdedores")
-        print(f"  Long HR  > 55%      : la mayoria de picks long suben (exceso>0)")
-        print(f"  Short HR > 55%      : la mayoria de picks short bajan (exceso<0)")
+        print(f"  Long HR  > 55%      : la mayoría de picks long suben (exceso>0)")
+        print(f"  Short HR > 55%      : la mayoría de picks short bajan (exceso<0)")
         print(f"  L/S Spread > 0      : longs reales superan a shorts reales en promedio")
 
     # ── Graficos ──────────────────────────────────────────────────────────────
@@ -606,4 +606,4 @@ if __name__ == "__main__":
             save_path=f"{DATA_DIR}/signal_selection_accuracy.png",
         )
 
-    print("\n[OK] Evaluacion de senales completada.")
+    print("\n[OK] Evaluación de señales completada.")

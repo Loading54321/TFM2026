@@ -25,7 +25,7 @@ Arquitectura de ventanas separadas
 
 EDA por régimen de mercado.
 ───────────────────────────
-  Antes del walk-forward se ejecuta un análisis exploratorio que responde
+  Antes del walk-forward se ejecuta un Análisis Exploratorio que responde
   al requisito del enunciado: observar qué sectores lideran y rezagan en
   cada fase del ciclo económico (Bear / Ranging / Bull).
 
@@ -59,7 +59,7 @@ warnings.filterwarnings("ignore")
 from config import (
     DATA_DIR, TRAIN_START, OOS_START, OOS_END,
     TOP_N, MIN_TRAIN_PERIODS, HMM_CONTEXT_PERIODS,
-    RANDOM_SEED, DEV_MODE, ML_TRAIN_EXCLUDE_PERIODS,
+    RANDOM_SEED, ML_TRAIN_EXCLUDE_PERIODS,
 )
 from utils import load_panel, get_feature_cols, ml_train_date_kept
 from models import MODELS as MODELS_ALL, build_pipeline, LGBM_AVAILABLE

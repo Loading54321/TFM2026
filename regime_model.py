@@ -2,7 +2,7 @@
 regime_model.py
 ===============
 # v2 final — Abril 2026
-Funciones compartidas para la deteccion de regimenes con Gaussian HMM.
+Funciones compartidas para la detección de regímenes con Gaussian HMM.
 
 Frecuencia: semanal (W-FRI). Las observaciones son momentum_13w y vol_13w,
 equivalente semanal a ret_3m/vol_3m (13 semanas ≈ 1 trimestre).
@@ -52,9 +52,9 @@ ELECCION DE FEATURES — por que (momentum_13w, vol_13w):
       incorrecto: el modelo asume independencia donde no la hay, y la EM
       converge a minimos locales donde Bear captura demasiados periodos.
 
-  Solucion — dos features aproximadamente ortogonales:
-    momentum_13w  retorno acumulado 13 semanas del SPY  (senial de DIRECCION)
-    vol_13w       volatilidad realizada 13w, anualizada (senial de RIESGO)
+  Solución — dos features aproximadamente ortogonales:
+    momentum_13w  retorno acumulado 13 semanas del SPY  (señal de DIRECCIÓN)
+    vol_13w       volatilidad realizada 13w, anualizada (señal de RIESGO)
     -> Alineado con PyQuantLab (2025): "returns + volatility" como
        observaciones standard para HMM de regimenes financieros.
     -> 13 semanas ≈ 3 meses: la escala de retorno compuesto es identica,
@@ -222,7 +222,7 @@ def _emission(model: GaussianHMM, obs: np.ndarray) -> np.ndarray:
     Calcula la densidad gaussiana multivariada para cada estado:
       log p = -0.5 * ( (obs-mu)^T Sigma^{-1} (obs-mu) + log|Sigma| + k*log(2pi) )
 
-    Se aniade una regularizacion minima (1e-8 * I) para garantizar que
+    Se añade una regularización mínima (1e-8 * I) para garantizar que
     Sigma sea definida positiva incluso si el EM converge a matrices casi
     singulares (raro con 'full' y suficientes datos, pero defensivo).
     """
@@ -230,7 +230,7 @@ def _emission(model: GaussianHMM, obs: np.ndarray) -> np.ndarray:
     em = np.zeros(model.n_components)
     for s in range(model.n_components):
         diff    = obs - model.means_[s]
-        cov     = model.covars_[s] + np.eye(k) * 1e-8   # regularizacion
+        cov     = model.covars_[s] + np.eye(k) * 1e-8   # regularización
         sign, logdet = np.linalg.slogdet(cov)
         if sign <= 0:          # no deberia ocurrir con regularizacion
             em[s] = 1e-300
@@ -351,7 +351,7 @@ def decode_oos_causal(
 
 def hmm_diagnostics(model: GaussianHMM, X_train: np.ndarray) -> dict:
     """
-    Metricas de calidad del HMM ajustado, alineadas con la literatura.
+    Métricas de calidad del HMM ajustado, alineadas con la literatura.
 
     Log-likelihood:
       Mide que tan bien el modelo explica los datos de entrenamiento IS.
@@ -373,8 +373,8 @@ def hmm_diagnostics(model: GaussianHMM, X_train: np.ndarray) -> dict:
       en N_ITER=500 iteraciones. En la practica, con inicializacion
       economica correcta, la EM suele converger antes de 200 iteraciones.
 
-    Distribucion de regimenes IS:
-      Proporcion esperada historicamente (1990-2020, S&P 500):
+    Distribución de regímenes IS:
+      Proporción esperada históricamente (1990-2020, S&P 500):
         Bull   ~60-65% de los meses
         Ranging ~20-25%
         Bear   ~12-18%
@@ -392,7 +392,7 @@ def hmm_diagnostics(model: GaussianHMM, X_train: np.ndarray) -> dict:
     )
     bic = -2 * log_lik + k_params * np.log(n)
 
-    # Distribucion de estados via Viterbi IS
+    # Distribución de estados vía Viterbi IS
     raw_states = model.predict(X_train)
     unique, counts = np.unique(raw_states, return_counts=True)
     state_pct = {int(s): float(c / n) for s, c in zip(unique, counts)}
@@ -404,7 +404,7 @@ def hmm_diagnostics(model: GaussianHMM, X_train: np.ndarray) -> dict:
         "n_obs"          : n,
         "converged"      : model.monitor_.converged,
         "n_iter_done"    : model.monitor_.iter,
-        "state_pct_raw"  : state_pct,   # indices HMM (antes del label_mapping)
+        "state_pct_raw"  : state_pct,   # índices HMM (antes del label_mapping)
     }
 
 

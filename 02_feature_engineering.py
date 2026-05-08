@@ -175,12 +175,14 @@ def compute_etf_features(prices: pd.DataFrame, sector_etfs: list) -> pd.DataFram
 
     Todas las features son causales: usan datos disponibles al cierre de la semana t.
 
-    Beta (beta_52w, beta_26w):
+    Beta (beta_52w, beta_26w, beta_13w):
       Covarianza rolling del retorno del ETF con el SPY dividida por la varianza
       rolling del SPY. Causal: en t solo usa retornos [t-window+1, t].
       Un beta > 1 indica que el ETF amplifica los movimientos del mercado;
-      < 1 indica que los amortigua. Utiles para que el modelo condicione la
-      prediccion al grado de sensibilidad sistematica del sector.
+      < 1 indica que los amortigua. Tres horizontes:
+        beta_52w (1 año)  — sensibilidad estructural al ciclo completo
+        beta_26w (6 meses) — sensibilidad táctica semestral
+        beta_13w (3 meses) — sensibilidad reactiva infraestacional
     """
     returns = prices[sector_etfs].pct_change()
     spy_r   = prices["SPY"].pct_change()
@@ -192,6 +194,7 @@ def compute_etf_features(prices: pd.DataFrame, sector_etfs: list) -> pd.DataFram
         spy_aligned = spy_r.reindex(r.index)
         spy_var_52  = spy_aligned.rolling(52).var().replace(0, np.nan)
         spy_var_26  = spy_aligned.rolling(26).var().replace(0, np.nan)
+        spy_var_13  = spy_aligned.rolling(13).var().replace(0, np.nan)
 
         d = pd.DataFrame(index=r.index)
         d["etf"]           = etf
@@ -215,6 +218,7 @@ def compute_etf_features(prices: pd.DataFrame, sector_etfs: list) -> pd.DataFram
         d["rsi_26w"]       = _rsi(p, 26)
         d["beta_52w"]      = r.rolling(52).cov(spy_aligned) / spy_var_52
         d["beta_26w"]      = r.rolling(26).cov(spy_aligned) / spy_var_26
+        d["beta_13w"]      = r.rolling(13).cov(spy_aligned) / spy_var_13
         records.append(d)
 
     panel = pd.concat(records)
@@ -226,7 +230,7 @@ def compute_etf_features(prices: pd.DataFrame, sector_etfs: list) -> pd.DataFram
                  "momentum_26w", "momentum_52w", "momentum_52_4",
                  "vol_3w", "vol_7w", "vol_13w", "vol_26w", "vol_52w",
                  "rsi_9w", "rsi_14w", "rsi_26w",
-                 "beta_52w", "beta_26w"]
+                 "beta_52w", "beta_26w", "beta_13w"]
     panel.sort_values(["etf", "date"], inplace=True)
     panel[feat_cols] = panel.groupby("etf")[feat_cols].ffill()
 
@@ -250,7 +254,7 @@ def add_cross_sectional_features(panel: pd.DataFrame) -> pd.DataFrame:
                 "momentum_26w", "momentum_52w",
                 "vol_3w", "vol_7w", "vol_13w", "vol_26w", "vol_52w",
                 "rsi_9w", "rsi_14w", "rsi_26w",
-                "beta_52w", "beta_26w"]:
+                "beta_52w", "beta_26w", "beta_13w"]:
         if col in panel.columns:
             panel[f"{col}_rank"] = (
                 panel.groupby("date")[col]
@@ -401,12 +405,12 @@ def build_feature_matrix(sector_etfs: list = None) -> pd.DataFrame:
                   "momentum_52_4",
                   "vol_3w","vol_7w","vol_13w","vol_26w","vol_52w",
                   "rsi_9w","rsi_14w","rsi_26w",
-                  "beta_52w","beta_26w"}
+                  "beta_52w","beta_26w","beta_13w"}
     _etf_rank  = {f"{c}_rank" for c in ["momentum_1w","momentum_3w","momentum_4w","momentum_7w","momentum_8w",
                                          "momentum_13w","momentum_26w","momentum_52w",
                                          "vol_3w","vol_7w","vol_13w","vol_26w","vol_52w",
                                          "rsi_9w","rsi_14w","rsi_26w",
-                                         "beta_52w","beta_26w"]}
+                                         "beta_52w","beta_26w","beta_13w"]}
     _etf_exc   = {"excess_ret_1w","excess_ret_13w","excess_ret_52w"}
     _spy_cols  = {"spy_ret_1w","spy_ret_4w","spy_ret_52w"}
     _ff5_cols  = {"Mkt-RF","SMB","HML","RMW","CMA","RF"}

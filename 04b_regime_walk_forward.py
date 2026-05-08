@@ -17,8 +17,8 @@ Ventajas frente a modelos separados por regimen:
   + Usa todos los datos IS (no descarta 2/3 del panel por regimen).
   + Las probabilidades soft transmiten la incertidumbre de regimen al modelo.
   + El LGBM aprende interacciones cruzadas entre features y regimen.
-  + Para semanas antiguas sin regimen calculado (fuera de la ventana HMM
-    rodante), market_regime=-1 y probs=1/3 senalizan incertidumbre maxima.
+  + Para semanas antiguas sin régimen calculado (fuera de la ventana HMM
+    rodante), market_regime=-1 y probs=1/3 señalizan incertidumbre máxima.
 
 Arquitectura por paso walk-forward (semana OOS t)
 ---------------------------------------------------
@@ -86,13 +86,13 @@ def _fit_and_label_train(
     probabilidades de regimen con forward filter causal para cada fecha
     de esa ventana (solo informacion disponible hasta cada punto s < t).
 
-    Ventana HMM rodante vs ML expansiva (separacion intencional):
-      HMM  [t - hmm_lookback, t)  aprox 5 anyos (260 semanas):
-           Captura la dinamica de regimen RECIENTE; las relaciones Bear/Bull
+    Ventana HMM rodante vs ML expansiva (separación intencional):
+      HMM  [t - hmm_lookback, t)  aprox. 5 años (260 semanas):
+           Captura la dinámica de régimen RECIENTE; las relaciones Bear/Bull
            de 2008 no contaminan la inferencia de 2024.
-      ML   [TRAIN_START, t)       aprox 12-16 anyos (expansiva):
-           Relaciones cross-seccionales features<->retornos son mas estables;
-           mas datos mejoran la generalizacion del modelo.
+      ML   [TRAIN_START, t)       aprox. 12-16 años (expansiva):
+           Relaciones cross-seccionales features<->retornos son más estables;
+           más datos mejoran la generalización del modelo.
 
     Devuelve
     --------
@@ -202,7 +202,7 @@ def walk_forward_regime_model(
     print(f"  ETFs             : {n_etfs}")
     print(f"  OOS              : {OOS_START} -> {OOS_END}  ({len(oos_dates)} semanas)")
     print(f"  Ventana HMM      : rodante {HMM_REGIME_LOOKBACK} semanas "
-          f"(aprox {HMM_REGIME_LOOKBACK // 52:.1f} anyos)  [re-ajuste EM por semana OOS]")
+          f"(aprox. {HMM_REGIME_LOOKBACK // 52:.1f} años)  [re-ajuste EM por semana OOS]")
     print(f"  Ventana ML       : expansiva desde {TRAIN_START}  [todos los datos IS]")
     print()
 

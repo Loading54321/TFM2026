@@ -10,12 +10,6 @@ Todos los parámetros globales están aquí para fácil mantenimiento:
   - Parámetros de HMM
   - Configuración de modelos ML
   - APIs y otras constantes
-
-DEV_MODE
---------
-  True  → parámetros reducidos para desarrollo rápido (~2-3 min por modelo).
-           Cambia solo OOS_START y n_estimators; la lógica del código NO varía.
-  False → configuración completa para el TFM final (~8-10 min por modelo)
 """
 
 import os
@@ -23,11 +17,6 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-
-# ============================================================================
-# MODO DESARROLLO  ← cambiar a False para la ejecución final del TFM
-# ============================================================================
-DEV_MODE = True   # ← PROVISIONAL: volver a False para ejecución final TFM
 
 # ============================================================================
 # DIRECTORIOS
@@ -39,15 +28,11 @@ DATA_DIR = "data"
 # PERÍODOS TEMPORALES
 # ============================================================================
 TRAIN_START = "2008-01-01"      # Inicio período de entrenamiento
-TRAIN_END = "2019-12-31"        # Fin período de entrenamiento (día antes OOS_START)
+TRAIN_END = "2019-12-31"        # Fin período de entrenamiento
+OOS_START = "2020-01-01"        # Inicio out-of-sample (~260 semanas OOS)
 OOS_END = "2024-12-31"          # Fin out-of-sample
 DATA_START = "2000-01-01"       # Inicio descarga de datos raw
 DATA_END = "2024-12-31"         # Fin descarga de datos raw
-
-# OOS_START se ajusta según DEV_MODE:
-#   DEV_MODE=True  → 2023-01-01 (~100 semanas OOS)
-#   DEV_MODE=False → 2020-01-01 (~260 semanas OOS, versión final TFM)
-OOS_START = "2023-01-01" if DEV_MODE else "2020-01-01"
 
 # Intervalos excluidos del entrenamiento de modelos supervisados (LightGBM, RF, GB).
 # Lista vacía [] → sin exclusión. No altera 01_data_download ni el ajuste EM del HMM.
@@ -79,10 +64,9 @@ HMM_REGIME_LOOKBACK = 260      # semanas ≈ 5 años (ventana rodante HMM en 04b
 # ============================================================================
 RANDOM_SEED = 42
 
-# Random Forest
-# DEV_MODE=True → 50 árboles (vs 200); 4× más rápido
+# Random Forest: 200 árboles, profundidad máxima 5, mínimo 10 muestras por hoja.
 RF_CONFIG = {
-    "n_estimators": 50 if DEV_MODE else 200,
+    "n_estimators": 200,
     "max_depth": 5,
     "min_samples_leaf": 10,
     "max_features": 0.5,
@@ -91,10 +75,9 @@ RF_CONFIG = {
 }
 
 # LightGBM (histogram-based gradient boosting, Jansen 2020 cap. 12)
-# DEV_MODE=True → 100 árboles (vs 500); 5× más rápido manteniendo histogramas.
 # num_leaves=31 ≈ max_depth=5 en sklearn. lambda_l1/l2: regularización adicional.
 LGBM_CONFIG = {
-    "n_estimators"     : 100 if DEV_MODE else 500,
+    "n_estimators"     : 500,
     "learning_rate"    : 0.05,
     "num_leaves"       : 31,
     "max_depth"        : -1,
@@ -144,8 +127,6 @@ KELLY_LOOKBACK_WEEKS = 36
 #   cost_t = n_legs_turned * (COST_BPS / 10_000) / n_positions_held
 # siendo n_legs_turned = |simétrica(new, prev)| en cada pata.
 COST_BPS = 10
-
-DEFAULT_MODEL = "RandomForest"
 
 
 # ============================================================================

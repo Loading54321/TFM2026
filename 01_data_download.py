@@ -236,7 +236,7 @@ def download_oil() -> pd.DataFrame:
     y resamplea a W-FRI + ffill.
     Calcula retornos 1 semana y 4 semanas (≈ 1 mes).
     """
-    print("[OIL] Descargando petroleo WTI (CL=F) via yfinance (diario -> W-FRI)...")
+    print("[OIL] Descargando petróleo WTI (CL=F) via yfinance (diario -> W-FRI)...")
     raw = yf.download(
         "CL=F", start=DATA_START, end=DATA_END,
         interval="1d", auto_adjust=True, progress=False

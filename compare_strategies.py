@@ -229,8 +229,8 @@ def run_comparison():
 
     sep = "=" * 100
     print(f"\n{sep}")
-    print("  COMPARACION ANUAL OOS — Retorno compuesto por año + métricas globales")
-    print(f"  Periodo OOS: {OOS_START[:4]}-{OOS_END[:4]}  |  Ranking basado en predicted_return del modelo")
+    print("  COMPARACIÓN ANUAL OOS — Retorno compuesto por año + métricas globales")
+    print(f"  Período OOS: {OOS_START[:4]}-{OOS_END[:4]}  |  Ranking basado en predicted_return del modelo")
     print(sep)
     print(df_fmt.to_string())
     print(sep)

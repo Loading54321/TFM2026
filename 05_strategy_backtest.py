@@ -19,6 +19,9 @@ Estrategia Long-Short con Kelly diagonal por activo:
       (2) |pred_bottom| > pred_Top1  (magnitud de caída supera la subida del mejor long)
     Si no cumple ambas, su peso es 0 (semana long-only parcial o total).
 
+  Universo: todos los ETFs del panel (sin filtro de beta). La selección
+    Top-N / Bottom-N se aplica sobre el universo completo de 11 ETFs.
+
   Ponderación (N = activos que pasaron los filtros, entre 3 y 6):
     1. Peso base:     w_i = 1/N  (positivo para longs, negativo para shorts)
     2. Kelly:         hk_i = KELLY_FRACTION * |pred_i| / var_i  (diagonal, por activo)
@@ -58,12 +61,6 @@ from utils import weekly_forward_returns
 # Nº de periodos por año (semanas W-FRI) para anualizar métricas.
 WEEKS_PER_YEAR = 52
 
-# Filtro de universo: solo ETFs con beta rolling >= BETA_MIN entran en cartera.
-# BETA_WINDOW: ventana causal en semanas (52w ≈ 1 año, mismo horizonte que vol_52w).
-# BETA_MIN: umbral; 1.0 significa sensibilidad >= mercado (amplifica movimientos SPY).
-BETA_WINDOW = 52
-BETA_MIN    = 1.0
-
 
 # ── Metricas ──────────────────────────────────────────────────────────────────
 
@@ -102,107 +99,6 @@ def performance_summary(returns: pd.Series, label: str = "") -> dict:
         "Best Week"  : f"{returns.max():.2%}",
         "Worst Week" : f"{returns.min():.2%}",
     }
-
-
-# ── Kelly Criterion multi-activo ──────────────────────────────────────────────
-
-def kelly_weights_multiasset(
-    long_etfs: list,
-    short_etfs: list,
-    pred_by_etf: pd.Series,
-    prices: pd.DataFrame,
-    current_date: pd.Timestamp,
-    lookback: int = KELLY_LOOKBACK_WEEKS,
-    kelly_fraction: float = KELLY_FRACTION,
-    reg: float = 1e-4,
-) -> tuple:
-    """
-    Criterio de Kelly multi-activo para una cartera long-short de n activos.
-
-    Formula:
-        f* = Sigma_eff^{-1} . m_eff
-
-    donde:
-      d_i        direccion de la posicion: +1 (long) o -1 (short)
-      m_eff_i    retorno esperado de la posicion i:  d_i * predicted_return_i
-                   Long:  m_eff = +predicted_return   (>0 si modelo ve subida)
-                   Short: m_eff = -predicted_return   (>0 si modelo ve bajada)
-      Sigma_eff  covarianza de los retornos efectivos de posicion:
-                   Sigma_eff[i,j] = d_i * d_j * Sigma[i,j]
-                   En forma matricial: Sigma_eff = D . Sigma . D
-                   donde D = diag(d_1,...,d_n)
-                 Esto captura que dos activos correlacionados en la misma
-                 direccion se penalizan entre si (reducen pesos mutuamente),
-                 y que un long y un short correlacionados se benefician.
-      Sigma      covarianza n×n de retornos SEMANALES históricos causales
-                 (ventana de `lookback` semanas anteriores a current_date)
-
-    Post-procesado:
-      - Kelly: f = kelly_fraction * f*  (1.0 por defecto = Kelly completo)
-      - Pesos negativos -> 0 (Kelly no puede revertir la direccion asignada)
-      - Normalizacion: los n pesos positivos suman 1 (100 % del capital)
-      - Fallback a pesos iguales (1/n) si la suma es <= 0
-
-    Causalidad (anti look-ahead):
-      Sigma se estima sobre hist_ret.index <= current_date — nunca se usan
-      precios posteriores a la fecha de decision.
-
-    Params:
-        long_etfs      lista de tickers de la pata larga (Top-N)
-        short_etfs     lista de tickers de la pata corta (Bottom-N)
-        pred_by_etf    pd.Series (index=ticker) con predicted_return del modelo
-        prices         DataFrame de precios SEMANALES (index=fecha, cols=tickers)
-        current_date   fecha de decision (causal: Sigma solo hasta esta fecha)
-        lookback       semanas de historia para estimar Sigma
-                       (default: KELLY_LOOKBACK_WEEKS en config.py)
-        kelly_fraction fraccion del Kelly completo  (default: KELLY_FRACTION=0.5 en config.py)
-        reg            regularizacion de la diagonal para evitar singularidad
-
-    Returns:
-        (long_w, short_w)  par de pd.Series con pesos >= 0 que suman <= 1
-                           y cuya suma conjunta es exactamente 1.
-    """
-    all_etfs = long_etfs + short_etfs
-    n = len(all_etfs)
-
-    # Vector de direcciones: +1 para longs, -1 para shorts
-    d = np.array([1.0] * len(long_etfs) + [-1.0] * len(short_etfs))
-
-    # Retornos historicos causales — solo precios <= current_date
-    hist_ret = prices[all_etfs].pct_change().dropna()
-    hist_ret = hist_ret.loc[hist_ret.index <= current_date].tail(lookback)
-
-    # Matriz de covarianza de retornos crudos (n x n)
-    Sigma = hist_ret.cov().values
-
-    # Sigma_eff = D . Sigma . D  (Sigma_eff[i,j] = d_i * d_j * Sigma[i,j])
-    D_mat     = np.diag(d)
-    Sigma_eff = D_mat @ Sigma @ D_mat
-
-    # Regularizacion: evita singularidad cuando activos estan muy correlacionados
-    Sigma_eff += reg * np.eye(n)
-
-    # Retornos esperados efectivos de cada posicion: m_eff_i = d_i * pred_i
-    m_eff = d * pred_by_etf[all_etfs].values
-
-    # f* = Sigma_eff^{-1} . m_eff  (solve es mas estable que inv)
-    try:
-        f_star = np.linalg.solve(Sigma_eff, m_eff)
-    except np.linalg.LinAlgError:
-        f_star = np.linalg.lstsq(Sigma_eff, m_eff, rcond=None)[0]
-
-    # Kelly y eliminacion de pesos negativos (sin inversion de direccion)
-    f = np.clip(kelly_fraction * f_star, 0.0, None)
-
-    total = f.sum()
-    if total <= 0:
-        # Fallback: pesos iguales si Kelly no produce ninguna señal positiva
-        f = np.ones(n) / n
-    else:
-        f /= total
-
-    f_series = pd.Series(f, index=all_etfs)
-    return f_series[long_etfs], f_series[short_etfs]
 
 
 # ── Kelly diagonal por activo ─────────────────────────────────────────────────
@@ -328,19 +224,6 @@ def build_portfolio(
     print(f"  [Validacion] {n_aligned}/{len(pred_dates)} semanas con retorno t+1 disponible "
           f"({n_aligned/len(pred_dates):.1%})")
 
-    # ── Pre-cómputo de betas rolling causales (una sola pasada) ───────────────
-    # beta_matrix[etf][t] = Cov(r_etf, r_SPY) / Var(r_SPY) en ventana [t-51, t]
-    # Causal: rolling calcula solo con datos hasta t; no hay lookahead.
-    spy_r        = prices["SPY"].pct_change()
-    spy_var_roll = spy_r.rolling(BETA_WINDOW).var().replace(0, np.nan)
-    beta_matrix  = pd.DataFrame(index=prices.index)
-    for _etf in [c for c in prices.columns if c != "SPY"]:
-        beta_matrix[_etf] = (
-            prices[_etf].pct_change().rolling(BETA_WINDOW).cov(spy_r) / spy_var_roll
-        )
-    print(f"  [Beta] Filtro universo: beta rolling {BETA_WINDOW}w >= {BETA_MIN} "
-          f"(causal, pre-calculado para {len(beta_matrix.columns)} ETFs)")
-
     results    = []
     prev_long  = set()
     prev_short = set()
@@ -349,27 +232,6 @@ def build_portfolio(
 
     for date, group in preds.groupby("date"):
 
-        # ── Filtro de universo por beta (causal) ──────────────────────────────
-        # Se usa el valor de beta_matrix en la semana de decision t.
-        # Si t no esta exactamente en el indice de prices, se toma el ultimo
-        # valor disponible <= t (precios ya son W-FRI, coinciden en la practica).
-        if date in beta_matrix.index:
-            beta_t = beta_matrix.loc[date]
-        else:
-            avail = beta_matrix.loc[beta_matrix.index <= date]
-            beta_t = avail.iloc[-1] if not avail.empty else pd.Series(dtype=float)
-
-        high_beta = [
-            e for e in group["etf"].unique()
-            if e in beta_t.index and pd.notna(beta_t[e]) and beta_t[e] >= BETA_MIN
-        ]
-
-        # Fallback: si quedan < TOP_N ETFs con beta >= BETA_MIN, se usa el
-        # universo completo para no dejar la pata larga sin candidatos.
-        if len(high_beta) < TOP_N:
-            high_beta = list(group["etf"].unique())
-
-        group       = group[group["etf"].isin(high_beta)]
         pred_by_etf = group.set_index("etf")["predicted_return"]
 
         # ── Seleccion de candidatos sobre universo filtrado ───────────────────
